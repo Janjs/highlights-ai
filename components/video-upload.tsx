@@ -32,30 +32,42 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   }, [])
 
   const processVideo = async (file: File) => {
+    console.log("[CLIENT] Starting video processing...")
+    console.log(`[CLIENT] File: ${file.name}, Size: ${file.size}, Type: ${file.type}`)
+
     setIsProcessing(true)
     setProcessingStage("Uploading video...")
 
     try {
-      const videoUrl = URL.createObjectURL(file)
-
       setProcessingStage("Detecting scenes with AI...")
 
+      console.log("[CLIENT] Creating FormData...")
       const formData = new FormData()
       formData.append("video", file)
 
+      console.log("[CLIENT] Sending POST request to /api/process-video...")
       const response = await fetch("/api/process-video", {
         method: "POST",
         body: formData,
       })
 
+      console.log(`[CLIENT] Response status: ${response.status}`)
+
       if (!response.ok) {
-        throw new Error("Failed to process video")
+        const errorData = await response.json()
+        console.error("[CLIENT] Error response:", errorData)
+        throw new Error(errorData.error || "Failed to process video")
       }
 
+      console.log("[CLIENT] Parsing response data...")
       const data = await response.json()
       const { scenes } = data
+      console.log(`[CLIENT] Received ${scenes.length} scenes:`, scenes)
 
       setProcessingStage("Creating segments...")
+
+      const videoUrl = "/api/video"
+      console.log("[CLIENT] Using server video URL:", videoUrl)
 
       const segments = scenes.map((scene: { start: number; end: number }) => ({
         start: scene.start,
@@ -63,14 +75,18 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
         url: videoUrl,
       }))
 
+      console.log("[CLIENT] Segments created:", segments)
+
       await new Promise((resolve) => setTimeout(resolve, 300))
 
+      console.log("[CLIENT] Calling onVideoProcessed...")
       onVideoProcessed({
         url: videoUrl,
         segments,
       })
+      console.log("[CLIENT] Video processing complete!")
     } catch (error) {
-      console.error("Error processing video:", error)
+      console.error("[CLIENT] Error processing video:", error)
       const errorMessage = error instanceof Error ? error.message : "Unknown error"
       alert(`Error processing video: ${errorMessage}`)
       setIsProcessing(false)

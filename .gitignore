@@ -9,6 +9,10 @@
 *.mpg
 *.m4v
 
+# video processing
+/clips/
+scenes.json
+
 # dependencies
 /node_modules
 

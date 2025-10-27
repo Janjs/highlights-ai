@@ -180,7 +180,26 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
         {/* Video Player */}
         <Card className="overflow-hidden">
           <div className="relative aspect-video bg-black">
-            <video ref={videoRef} src={videoData.url} className="h-full w-full" onClick={togglePlay} />
+            <video
+              ref={videoRef}
+              src={videoData.url}
+              className="h-full w-full"
+              onClick={togglePlay}
+              preload="auto"
+              playsInline
+              onError={(e) => {
+                const video = e.target as HTMLVideoElement
+                console.error("[VIDEO] Error loading video")
+                console.error("[VIDEO] Video src:", videoData.url)
+                console.error("[VIDEO] Error code:", video.error?.code)
+                console.error("[VIDEO] Error message:", video.error?.message)
+                console.error("[VIDEO] Network state:", video.networkState)
+                console.error("[VIDEO] Ready state:", video.readyState)
+              }}
+              onLoadStart={() => console.log("[VIDEO] Load started")}
+              onLoadedMetadata={() => console.log("[VIDEO] Metadata loaded")}
+              onCanPlay={() => console.log("[VIDEO] Can play")}
+            />
             <div className="absolute bottom-4 right-4 rounded-lg bg-black/70 px-3 py-2 text-sm font-medium text-white">
               Segment {currentSegment + 1}/{videoData.segments.length}
             </div>
@@ -259,9 +278,8 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
               {videoData.segments.map((segment, index) => (
                 <div
                   key={index}
-                  className={`absolute top-0 h-full border-r border-background transition-colors ${
-                    currentSegment === index ? "bg-primary" : "bg-secondary hover:bg-secondary/80"
-                  }`}
+                  className={`absolute top-0 h-full border-r border-background transition-colors ${currentSegment === index ? "bg-primary" : "bg-secondary hover:bg-secondary/80"
+                    }`}
                   style={{
                     left: `${(segment.start / duration) * 100}%`,
                     width: `${((segment.end - segment.start) / duration) * 100}%`,
@@ -289,11 +307,10 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                 <button
                   key={index}
                   onClick={() => jumpToSegment(index)}
-                  className={`rounded-lg p-3 text-center text-sm font-medium transition-all ${
-                    currentSegment === index
-                      ? "bg-primary text-primary-foreground shadow-lg"
-                      : "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:shadow"
-                  }`}
+                  className={`rounded-lg p-3 text-center text-sm font-medium transition-all ${currentSegment === index
+                    ? "bg-primary text-primary-foreground shadow-lg"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:shadow"
+                    }`}
                 >
                   <div className="text-xs opacity-80">S{index + 1}</div>
                   <div className="mt-1 text-xs">{formatTime(segment.start)}</div>
