@@ -32,6 +32,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   }, [])
 
   const processVideo = async (file: File) => {
+    const startTime = performance.now()
     console.log("[CLIENT] Starting video processing...")
     console.log(`[CLIENT] File: ${file.name}, Size: ${file.size}, Type: ${file.type}`)
 
@@ -39,6 +40,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
     setProcessingStage("Uploading video...")
 
     try {
+      const uploadStart = performance.now()
       setProcessingStage("Detecting scenes with AI...")
 
       console.log("[CLIENT] Creating FormData...")
@@ -51,6 +53,8 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
         body: formData,
       })
 
+      const uploadEnd = performance.now()
+      console.log(`[CLIENT] Upload complete in ${(uploadEnd - uploadStart).toFixed(2)}ms`)
       console.log(`[CLIENT] Response status: ${response.status}`)
 
       if (!response.ok) {
@@ -59,9 +63,12 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
         throw new Error(errorData.error || "Failed to process video")
       }
 
+      const parseStart = performance.now()
       console.log("[CLIENT] Parsing response data...")
       const data = await response.json()
       const { scenes } = data
+      const parseEnd = performance.now()
+      console.log(`[CLIENT] Parsing complete in ${(parseEnd - parseStart).toFixed(2)}ms`)
       console.log(`[CLIENT] Received ${scenes.length} scenes:`, scenes)
 
       setProcessingStage("Creating segments...")
@@ -76,6 +83,9 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
       }))
 
       console.log("[CLIENT] Segments created:", segments)
+
+      const totalTime = performance.now() - startTime
+      console.log(`[CLIENT] Total processing time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`)
 
       await new Promise((resolve) => setTimeout(resolve, 300))
 
