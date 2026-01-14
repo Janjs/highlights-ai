@@ -40,6 +40,7 @@
     "@vercel/analytics": "latest",
     "@vercel/blob": "2.0.0",
     "autoprefixer": "^10.4.20",
+    "busboy": "^1.6.0",
     "child_process": "1.0.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

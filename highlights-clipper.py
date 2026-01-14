@@ -4,8 +4,9 @@ from scenedetect import VideoManager, SceneManager
 from scenedetect.detectors import ContentDetector
 import json
 import time
+import os
 
-video_path = "input.mp4"
+video_path = os.getenv("VIDEO_PATH", "input_original.mp4")
 
 script_start = time.time()
 print("=" * 60)

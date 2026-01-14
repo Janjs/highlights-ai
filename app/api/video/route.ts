@@ -1,22 +1,51 @@
 import { NextRequest, NextResponse } from "next/server"
-import { readFile, stat } from "fs/promises"
+import { stat } from "fs/promises"
+import { createReadStream } from "fs"
 import path from "path"
+import { Readable } from "stream"
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
     try {
         const videoPath = path.join(process.cwd(), "input.mp4")
-
         const fileStats = await stat(videoPath)
-        const fileBuffer = await readFile(videoPath)
+        const fileSize = fileStats.size
 
-        return new NextResponse(fileBuffer, {
-            status: 200,
-            headers: {
-                "Content-Type": "video/mp4",
-                "Content-Length": fileStats.size.toString(),
-                "Accept-Ranges": "bytes",
-            },
-        })
+        const rangeHeader = request.headers.get("range")
+        
+        if (rangeHeader) {
+            const parts = rangeHeader.replace(/bytes=/, "").split("-")
+            const start = parseInt(parts[0], 10)
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+            const chunkSize = end - start + 1
+
+            const stream = createReadStream(videoPath, { start, end })
+            const readable = Readable.toWeb(stream) as ReadableStream<Uint8Array>
+
+            return new NextResponse(readable, {
+                status: 206,
+                headers: {
+                    "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": chunkSize.toString(),
+                    "Content-Type": "video/mp4",
+                },
+            })
+        } else {
+            const stream = createReadStream(videoPath)
+            const readable = Readable.toWeb(stream) as ReadableStream<Uint8Array>
+
+            return new NextResponse(readable, {
+                status: 200,
+                headers: {
+                    "Content-Length": fileSize.toString(),
+                    "Content-Type": "video/mp4",
+                    "Accept-Ranges": "bytes",
+                },
+            })
+        }
     } catch (error) {
         console.error("[API] Error serving video:", error)
         return NextResponse.json({ error: "Video not found" }, { status: 404 })

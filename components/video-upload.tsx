@@ -45,7 +45,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
       console.log("[CLIENT] Creating FormData...")
       const formData = new FormData()
-      formData.append("video", file)
+      formData.append("video", file, file.name)
 
       console.log("[CLIENT] Sending POST request to /api/process-video...")
       const response = await fetch("/api/process-video", {
