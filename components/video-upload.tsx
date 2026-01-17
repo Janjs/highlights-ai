@@ -2,8 +2,8 @@
 
 import type React from "react"
 
-import { useState, useCallback } from "react"
-import { Upload, Film } from "lucide-react"
+import { useState, useCallback, useEffect } from "react"
+import { Upload, Film, History } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
@@ -20,6 +20,44 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingStage, setProcessingStage] = useState("")
+  const [hasCache, setHasCache] = useState(false)
+
+  useEffect(() => {
+    const checkCache = async () => {
+      try {
+        const response = await fetch("/api/cache")
+        const data = await response.json()
+        setHasCache(data.exists)
+      } catch (error) {
+        console.error("[CLIENT] Error checking cache:", error)
+      }
+    }
+    checkCache()
+  }, [])
+
+  const loadCachedVideo = useCallback(async () => {
+    try {
+      const response = await fetch("/api/cache")
+      const data = await response.json()
+      
+      if (data.exists && data.scenes) {
+        const videoUrl = "/api/video"
+        const segments = data.scenes.map((scene: { start: number; end: number }) => ({
+          start: scene.start,
+          end: scene.end,
+          url: videoUrl,
+        }))
+        
+        onVideoProcessed({
+          url: videoUrl,
+          segments,
+        })
+      }
+    } catch (error) {
+      console.error("[CLIENT] Error loading cached video:", error)
+      alert("Failed to load cached video")
+    }
+  }, [onVideoProcessed])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -196,6 +234,15 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
               <p className="mb-2 text-lg font-medium text-foreground">{processingStage}</p>
               <p className="text-sm text-muted-foreground">Analyzing video and creating timeline</p>
             </div>
+          </div>
+        )}
+
+        {hasCache && !isProcessing && (
+          <div className="mt-4 flex justify-center">
+            <Button variant="outline" onClick={loadCachedVideo}>
+              <History className="mr-2 h-4 w-4" />
+              Load Cached Video
+            </Button>
           </div>
         )}
 

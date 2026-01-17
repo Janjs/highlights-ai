@@ -53,11 +53,12 @@ print(f"✅ Collected timing for {len(scene_list)} scenes in {data_time:.3f}s")
 
 # 3️⃣ Export scene data
 json_start = time.time()
-with open("scenes.json", "w") as f:
+scenes_json_path = os.getenv("SCENES_JSON_PATH", "scenes.json")
+with open(scenes_json_path, "w") as f:
     json.dump(scenes_data, f, indent=2)
 json_time = time.time() - json_start
 
-print(f"\n✅ Scene data exported to scenes.json in {json_time:.3f}s")
+print(f"\n✅ Scene data exported to {scenes_json_path} in {json_time:.3f}s")
 
 total_time = time.time() - script_start
 print("=" * 60)

@@ -93,9 +93,13 @@ export async function POST(request: NextRequest) {
         const buffer = fileBuffer
 
         const projectRoot = process.cwd()
-        const originalVideoPath = path.join(projectRoot, "input_original.mp4")
-        const videoPath = path.join(projectRoot, "input.mp4")
-        const scenesJsonPath = path.join(projectRoot, "scenes.json")
+        const cacheDir = path.join(projectRoot, ".cache")
+        const originalVideoPath = path.join(cacheDir, "input_original.mp4")
+        const videoPath = path.join(cacheDir, "input.mp4")
+        const scenesJsonPath = path.join(cacheDir, "scenes.json")
+
+        const { mkdir } = await import("fs/promises")
+        await mkdir(cacheDir, { recursive: true })
 
         const writeStart = performance.now()
         console.log(`[API] Writing original video to: ${originalVideoPath}`)
@@ -130,7 +134,7 @@ export async function POST(request: NextRequest) {
 
         const { stdout, stderr } = await execAsync(`python3 ${pythonScriptPath}`, {
             cwd: projectRoot,
-            env: { ...process.env, VIDEO_PATH: originalVideoPath },
+            env: { ...process.env, VIDEO_PATH: originalVideoPath, SCENES_JSON_PATH: scenesJsonPath },
         })
 
         const pythonEnd = performance.now()

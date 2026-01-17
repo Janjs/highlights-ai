@@ -9,7 +9,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
     try {
-        const videoPath = path.join(process.cwd(), "input.mp4")
+        const cacheDir = path.join(process.cwd(), ".cache")
+        const videoPath = path.join(cacheDir, "input.mp4")
         const fileStats = await stat(videoPath)
         const fileSize = fileStats.size
 

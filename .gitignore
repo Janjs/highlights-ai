@@ -12,6 +12,8 @@
 # video processing
 /clips/
 scenes.json
+.cache/
+input*.mp4
 
 # dependencies
 /node_modules
