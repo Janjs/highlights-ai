@@ -141,7 +141,9 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     const video = videoRef.current
     if (!video) return
 
-    video.currentTime = videoData.segments[index].start
+    const segment = videoData.segments[index]
+    const offset = 0.01
+    video.currentTime = Math.min(segment.start + offset, segment.end - 0.01)
     setCurrentSegment(index)
   }
 
