@@ -260,17 +260,17 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
       {/* Top Header Bar */}
       <div className="bg-black border-b border-white/20 px-4 py-2 shrink-0">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-white">Video Editor</h1>
-          <div className="flex gap-2">
-            <ThemeSwitcher />
+          <h1 className="text-lg font-bold text-white">Highlight AI</h1>
+          <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onReset}>
-              <RotateCcw className="mr-2 h-4 w-4" />
+              <RotateCcw className="h-4 w-4" />
               New Video
             </Button>
             <Button size="sm">
-              <Download className="mr-2 h-4 w-4" />
+              <Download className="h-4 w-4" />
               Export
             </Button>
+            <ThemeSwitcher />
           </div>
         </div>
       </div>
@@ -311,7 +311,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             {/* Playback Controls */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" onClick={toggleMute} className="h-8 w-8 text-white hover:bg-white/20">
+                <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
                   {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 </Button>
                 <Slider
@@ -329,11 +329,10 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                   size="icon"
                   onClick={playPreviousSegment}
                   disabled={currentSegment === 0}
-                  className="text-white"
                 >
                   <SkipBack className="h-5 w-5" />
                 </Button>
-                <Button size="icon" onClick={togglePlay} className="h-12 w-12">
+                <Button size="icon-lg" onClick={togglePlay}>
                   {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
                 </Button>
                 <Button
@@ -341,7 +340,6 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                   size="icon"
                   onClick={playNextSegment}
                   disabled={currentSegment === videoData.segments.length - 1}
-                  className="text-white"
                 >
                   <SkipForward className="h-5 w-5" />
                 </Button>
@@ -363,7 +361,6 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 text-white hover:bg-white/20"
               onClick={() => setZoom(Math.max(0.5, zoom - 0.5))}
             >
               -
@@ -372,7 +369,6 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 text-white hover:bg-white/20"
               onClick={() => setZoom(Math.min(5, zoom + 0.5))}
             >
               +
@@ -384,8 +380,8 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
           {canScrollLeft && (
             <Button
               variant="ghost"
-              size="icon"
-              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 h-8 w-8 text-white hover:bg-white/20 bg-black/60"
+              size="icon-sm"
+              className="absolute left-0 top-1/2 -translate-y-1/2 z-10"
               onClick={() => scrollTimeline("left")}
             >
               <ChevronLeft className="h-5 w-5" />
@@ -394,8 +390,8 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
           {canScrollRight && (
             <Button
               variant="ghost"
-              size="icon"
-              className="absolute right-0 top-1/2 -translate-y-1/2 z-10 h-8 w-8 text-white hover:bg-white/20 bg-black/60"
+              size="icon-sm"
+              className="absolute right-0 top-1/2 -translate-y-1/2 z-10"
               onClick={() => scrollTimeline("right")}
             >
               <ChevronRight className="h-5 w-5" />
