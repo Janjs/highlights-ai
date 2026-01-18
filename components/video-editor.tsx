@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight } from "lucide-react"
+import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -32,6 +32,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   const [zoom, setZoom] = useState(3)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
+  const [timelineScroll, setTimelineScroll] = useState({ scrollLeft: 0, scrollWidth: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const [selectedSegments, setSelectedSegments] = useState<Set<number>>(
     () => new Set(videoData.segments.map((_, i) => i)),
@@ -192,8 +193,8 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     if (!video) return
 
     const segment = videoData.segments[index]
-    const offset = 0.01
-    video.currentTime = Math.min(segment.start + offset, segment.end - 0.01)
+    const seekTime = Math.min(segment.start + 0.15, segment.end - 0.01)
+    video.currentTime = Math.max(segment.start, seekTime)
     setCurrentSegment(index)
   }
 
@@ -203,6 +204,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
 
     setCanScrollLeft(container.scrollLeft > 0)
     setCanScrollRight(container.scrollLeft < container.scrollWidth - container.clientWidth - 1)
+    setTimelineScroll({ scrollLeft: container.scrollLeft, scrollWidth: container.scrollWidth })
   }
 
   const scrollTimeline = (direction: "left" | "right") => {
@@ -354,7 +356,61 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
         <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black via-black/80 to-transparent p-4">
           <div className="space-y-3">
             {/* Progress Bar */}
-            <Slider value={[currentTime]} max={duration} step={0.1} onValueChange={handleSeek} className="w-full" />
+            <div
+              className="relative w-full h-6 flex items-center cursor-pointer"
+              onMouseDown={(e) => {
+                if (e.button !== 0) return
+                const bar = e.currentTarget
+                const seek = (clientX: number) => {
+                  const r = bar.getBoundingClientRect()
+                  const ratio = Math.max(0, Math.min(1, (clientX - r.left) / r.width))
+                  handleSeek([ratio * duration])
+                }
+                seek(e.clientX)
+                const onMove = (e: MouseEvent) => seek(e.clientX)
+                const onUp = () => {
+                  document.removeEventListener("mousemove", onMove)
+                  document.removeEventListener("mouseup", onUp)
+                }
+                document.addEventListener("mousemove", onMove)
+                document.addEventListener("mouseup", onUp)
+              }}
+            >
+              <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full overflow-hidden bg-secondary pointer-events-none">
+                {duration > 0 &&
+                  videoData.segments.map((seg, i) => {
+                    const selected = selectedSegments.has(i)
+                    return (
+                      <div
+                        key={i}
+                        className={`absolute top-0 h-full ${
+                          selected
+                            ? currentSegment === i
+                              ? "bg-primary"
+                              : "bg-primary/25"
+                            : "bg-muted/50"
+                        }`}
+                        style={{
+                          left: `${(seg.start / duration) * 100}%`,
+                          width: `${((seg.end - seg.start) / duration) * 100}%`,
+                        }}
+                      />
+                    )
+                  })}
+              </div>
+              <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-2 rounded-l-full bg-primary/30 pointer-events-none"
+                style={{
+                  width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                }}
+              />
+              <div
+                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 border-primary bg-background pointer-events-none"
+                style={{
+                  left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                }}
+              />
+            </div>
             <div className="flex justify-between text-xs text-white/70">
               <span>{formatTime(currentTime)}</span>
               <span>{formatTime(duration)}</span>
@@ -433,7 +489,18 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
           </div>
             </div>
 
-            <div className="relative w-full h-[160px]">
+            <div className="relative w-full h-[160px] overflow-visible">
+          {duration > 0 && (
+            <div
+              className="pointer-events-none absolute z-30 -translate-x-1/2"
+              style={{
+                left: (currentTime / duration) * timelineScroll.scrollWidth - timelineScroll.scrollLeft,
+                top: -8,
+              }}
+            >
+              <ChevronDown className="h-4 w-4 text-border" />
+            </div>
+          )}
           {canScrollLeft && (
             <Button
               variant="ghost"
@@ -480,10 +547,10 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                     key={index}
                     className={`absolute top-0 h-full border-r border-border transition-all ${
                       !selected
-                        ? "bg-muted/70"
+                        ? "bg-muted/50"
                         : currentSegment === index
                           ? "bg-primary"
-                          : "bg-muted hover:bg-muted/80"
+                          : "bg-primary/25 hover:bg-primary/30"
                     }`}
                     style={{
                       left: `${(segment.start / duration) * 100}%`,
@@ -544,7 +611,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
               })}
               {/* Playhead */}
               <div
-                className="pointer-events-none absolute top-0 h-full w-1 bg-accent z-20"
+                className="pointer-events-none absolute top-0 h-full w-0.5 -translate-x-1/2 z-20 bg-secondary-foreground"
                 style={{ left: `${(currentTime / duration) * 100}%` }}
               />
             </div>
