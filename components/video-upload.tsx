@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
 import { ThemeSwitcher } from "@/components/theme-switcher"
+import { AppIcon } from "@/components/app-icon"
 
 interface VideoUploadProps {
   onVideoProcessed: (data: {
@@ -199,7 +200,10 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
               <Film className="h-12 w-12 text-primary" />
             </div>
           </div>
-          <h1 className="mb-2 text-3xl font-bold text-foreground">Highlight AI</h1>
+          <h1 className="mb-2 flex items-center justify-center gap-2 text-3xl font-bold text-foreground">
+            <AppIcon className="h-8 w-8 shrink-0" />
+            Highlight AI
+          </h1>
           <p className="text-muted-foreground">Upload your video to automatically detect and split scenes</p>
         </div>
 

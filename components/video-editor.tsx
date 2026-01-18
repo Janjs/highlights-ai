@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Kbd } from "@/components/ui/kbd"
 import { Slider } from "@/components/ui/slider"
 import { ThemeSwitcher } from "@/components/theme-switcher"
+import { AppIcon } from "@/components/app-icon"
 
 interface VideoEditorProps {
   videoData: {
@@ -311,7 +312,10 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
       {/* Top Header Bar */}
       <div className="bg-black border-b border-white/20 px-4 py-2 shrink-0">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-white">Highlight AI</h1>
+          <h1 className="flex items-center gap-2 text-lg font-bold text-white">
+            <AppIcon className="h-5 w-5 shrink-0" />
+            Highlight AI
+          </h1>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onReset}>
               <RotateCcw className="h-4 w-4" />
