@@ -4,7 +4,10 @@ import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
 import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Kbd } from "@/components/ui/kbd"
 import { Slider } from "@/components/ui/slider"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 
@@ -29,7 +32,14 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  const [selectedSegments, setSelectedSegments] = useState<Set<number>>(
+    () => new Set(videoData.segments.map((_, i) => i)),
+  )
   const dragStartRef = useRef({ x: 0, scrollLeft: 0 })
+
+  useEffect(() => {
+    setSelectedSegments(new Set(videoData.segments.map((_, i) => i)))
+  }, [videoData.url])
 
   useEffect(() => {
     const video = videoRef.current
@@ -43,6 +53,33 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
       )
       if (segmentIndex !== -1 && segmentIndex !== currentSegment) {
         setCurrentSegment(segmentIndex)
+      }
+
+      if (isPlaying && currentSegment >= 0 && currentSegment < videoData.segments.length) {
+        const seg = videoData.segments[currentSegment]
+        if (video.currentTime >= seg.end - 0.02) {
+          const next = [...selectedSegments].filter((i) => i > currentSegment).sort((a, b) => a - b)[0] ?? null
+          if (next != null) {
+            video.currentTime = videoData.segments[next].start + 0.01
+            setCurrentSegment(next)
+          } else {
+            video.pause()
+            setIsPlaying(false)
+          }
+        }
+      }
+
+      if (isPlaying && !selectedSegments.has(currentSegment)) {
+        const next = [...selectedSegments].filter((i) => i > currentSegment).sort((a, b) => a - b)[0]
+          ?? [...selectedSegments].sort((a, b) => a - b)[0]
+          ?? null
+        if (next != null) {
+          video.currentTime = videoData.segments[next].start + 0.01
+          setCurrentSegment(next)
+        } else {
+          video.pause()
+          setIsPlaying(false)
+        }
       }
     }
 
@@ -63,7 +100,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
       video.removeEventListener("loadedmetadata", handleLoadedMetadata)
       video.removeEventListener("ended", handleEnded)
     }
-  }, [videoData.segments, currentSegment])
+  }, [videoData.segments, currentSegment, isPlaying, selectedSegments])
 
   const togglePlay = () => {
     const video = videoRef.current
@@ -72,6 +109,13 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     if (isPlaying) {
       video.pause()
     } else {
+      if (!selectedSegments.has(currentSegment)) {
+        const next = getNextSelected(currentSegment) ?? [...selectedSegments].sort((a, b) => a - b)[0] ?? null
+        if (next != null) {
+          video.currentTime = videoData.segments[next].start + 0.01
+          setCurrentSegment(next)
+        }
+      }
       video.play()
     }
     setIsPlaying(!isPlaying)
@@ -85,13 +129,18 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     setCurrentTime(value[0])
   }
 
+  const getNextSelected = (from: number) =>
+    [...selectedSegments].filter((i) => i > from).sort((a, b) => a - b)[0] ?? null
+  const getPrevSelected = (from: number) =>
+    [...selectedSegments].filter((i) => i < from).sort((a, b) => b - a)[0] ?? null
+
   const playNextSegment = () => {
     const video = videoRef.current
     if (!video) return
-
-    const nextSegment = Math.min(currentSegment + 1, videoData.segments.length - 1)
-    video.currentTime = videoData.segments[nextSegment].start
-    setCurrentSegment(nextSegment)
+    const next = getNextSelected(currentSegment)
+    if (next === null) return
+    video.currentTime = videoData.segments[next].start + 0.01
+    setCurrentSegment(next)
     if (!isPlaying) {
       video.play()
       setIsPlaying(true)
@@ -101,10 +150,10 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   const playPreviousSegment = () => {
     const video = videoRef.current
     if (!video) return
-
-    const prevSegment = Math.max(currentSegment - 1, 0)
-    video.currentTime = videoData.segments[prevSegment].start
-    setCurrentSegment(prevSegment)
+    const prev = getPrevSelected(currentSegment)
+    if (prev === null) return
+    video.currentTime = videoData.segments[prev].start + 0.01
+    setCurrentSegment(prev)
     if (!isPlaying) {
       video.play()
       setIsPlaying(true)
@@ -330,7 +379,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                   variant="outline"
                   size="icon"
                   onClick={playPreviousSegment}
-                  disabled={currentSegment === 0}
+                  disabled={getPrevSelected(currentSegment) === null}
                 >
                   <SkipBack className="h-5 w-5" />
                 </Button>
@@ -341,7 +390,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                   variant="outline"
                   size="icon"
                   onClick={playNextSegment}
-                  disabled={currentSegment === videoData.segments.length - 1}
+                  disabled={getNextSelected(currentSegment) === null}
                 >
                   <SkipForward className="h-5 w-5" />
                 </Button>
@@ -356,9 +405,15 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
       {/* Segments Timeline Footer */}
       <div className="bg-black border-t border-white/20 shrink-0 flex flex-col">
         <div className="px-3 py-2 flex items-center justify-between">
-          <span className="text-sm font-medium text-white">
-            Segment {currentSegment + 1} of {videoData.segments.length}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-white min-w-[12rem] tabular-nums">
+              Segment {currentSegment + 1} of {videoData.segments.length} · {selectedSegments.size} in sequence
+            </span>
+            <Badge variant="outline" className="leading-none">
+              <Kbd className="h-4 min-w-4 text-[10px]">⌘</Kbd>
+              + Click
+            </Badge>
+          </div>
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -371,7 +426,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setZoom(Math.min(5, zoom + 0.5))}
+              onClick={() => setZoom(Math.min(10, zoom + 0.5))}
             >
               +
             </Button>
@@ -383,7 +438,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             <Button
               variant="ghost"
               size="icon-sm"
-              className="absolute left-0 top-1/2 -translate-y-1/2 z-10"
+              className="absolute left-2 top-1/2 -translate-y-1/2 z-10"
               onClick={() => scrollTimeline("left")}
             >
               <ChevronLeft className="h-5 w-5" />
@@ -393,7 +448,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             <Button
               variant="ghost"
               size="icon-sm"
-              className="absolute right-0 top-1/2 -translate-y-1/2 z-10"
+              className="absolute right-2 top-1/2 -translate-y-1/2 z-10"
               onClick={() => scrollTimeline("right")}
             >
               <ChevronRight className="h-5 w-5" />
@@ -418,34 +473,74 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
               className="relative h-full min-w-full bg-black/40"
               style={{ width: `${zoom * 100}%`, minHeight: "100%" }}
             >
-              {videoData.segments.map((segment, index) => (
-                <button
-                  key={index}
-                  className={`absolute top-0 h-full border-r border-white/10 transition-all ${currentSegment === index
-                    ? "bg-primary"
-                    : "bg-white/20 hover:bg-white/30"
-                    }`}
-                  style={{
-                    left: `${(segment.start / duration) * 100}%`,
-                    width: `${((segment.end - segment.start) / duration) * 100}%`,
-                  }}
-                  onClick={(e) => {
-                    if (!isDragging) {
-                      jumpToSegment(index)
-                    }
-                  }}
-                  onMouseDown={(e) => {
-                    if (e.button === 0) {
-                      e.stopPropagation()
-                    }
-                  }}
-                >
-                  <div className="flex h-full flex-col items-center justify-center text-xs font-medium text-white">
-                    <div>S{index + 1}</div>
-                    <div className="text-[10px] opacity-70">{formatTime(segment.start)}</div>
-                  </div>
-                </button>
-              ))}
+              {videoData.segments.map((segment, index) => {
+                const selected = selectedSegments.has(index)
+                return (
+                  <button
+                    key={index}
+                    className={`absolute top-0 h-full border-r border-white/10 transition-all ${!selected
+                      ? "bg-white/10 opacity-70"
+                      : currentSegment === index
+                        ? "bg-primary"
+                        : "bg-white/20 hover:bg-white/30"
+                      }`}
+                    style={{
+                      left: `${(segment.start / duration) * 100}%`,
+                      width: `${((segment.end - segment.start) / duration) * 100}%`,
+                    }}
+                    onClick={(e) => {
+                      if (!isDragging) {
+                        if (e.metaKey || e.ctrlKey) {
+                          setSelectedSegments((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(index)) {
+                              if (prev.size === videoData.segments.length) return new Set([index])
+                              next.delete(index)
+                            } else {
+                              next.add(index)
+                            }
+                            return next
+                          })
+                        } else {
+                          jumpToSegment(index)
+                        }
+                      }
+                    }}
+                    onMouseDown={(e) => {
+                      if (e.button === 0) {
+                        e.stopPropagation()
+                      }
+                    }}
+                  >
+                    <div
+                      className="absolute top-1 right-1"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        checked={selected}
+                        onCheckedChange={(checked) =>
+                          setSelectedSegments((prev) => {
+                            const next = new Set(prev)
+                            if (checked === true) {
+                              next.add(index)
+                            } else {
+                              if (prev.size === videoData.segments.length) return new Set([index])
+                              next.delete(index)
+                            }
+                            return next
+                          })
+                        }
+                        className="border-white/40 bg-transparent dark:bg-transparent data-[state=checked]:!bg-transparent data-[state=checked]:!text-white data-[state=checked]:!border-white dark:data-[state=checked]:!bg-transparent"
+                      />
+                    </div>
+                    <div className="flex h-full flex-col items-center justify-center text-xs font-medium text-white">
+                      <div>S{index + 1}</div>
+                      <div className="text-[10px] opacity-70">{formatTime(segment.start)}</div>
+                    </div>
+                  </button>
+                )
+              })}
               {/* Playhead */}
               <div
                 className="pointer-events-none absolute top-0 h-full w-1 bg-accent z-20"
