@@ -308,11 +308,10 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   }, [currentTime, duration, zoom, isPlaying])
 
   return (
-    <div className="flex flex-col h-screen max-h-screen w-screen overflow-hidden bg-black">
-      {/* Top Header Bar */}
-      <div className="bg-black border-b border-white/20 px-4 py-2 shrink-0">
-        <div className="flex items-center justify-between">
-          <h1 className="flex items-center gap-2 text-lg font-bold text-white">
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto max-w-6xl px-6 md:px-10 lg:px-12 py-6 md:py-6 flex flex-col gap-6">
+        <div className="flex items-center justify-between shrink-0">
+          <h1 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <AppIcon className="h-5 w-5 shrink-0" />
             Highlight AI
           </h1>
@@ -328,11 +327,9 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             <ThemeSwitcher />
           </div>
         </div>
-      </div>
 
-      {/* Video Container with Overlay Controls */}
-      <div className="flex-1 relative min-h-0">
-        <video
+        <div className="rounded-xl overflow-hidden bg-black relative aspect-video">
+          <video
           ref={videoRef}
           src={videoData.url}
           className="h-full w-full object-contain"
@@ -404,13 +401,12 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             </div>
           </div>
         </div>
-      </div>
+        </div>
 
-      {/* Segments Timeline Footer */}
-      <div className="bg-black border-t border-white/20 shrink-0 flex flex-col">
-        <div className="px-3 py-2 flex items-center justify-between">
+        <div className="flex flex-col border rounded-lg bg-card/50">
+            <div className="px-4 py-3 flex items-center justify-between border-b">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-white min-w-[12rem] tabular-nums">
+            <span className="text-sm font-medium text-foreground min-w-[12rem] tabular-nums">
               Segment {currentSegment + 1} of {videoData.segments.length} · {selectedSegments.size} in sequence
             </span>
             <Badge variant="outline" className="leading-none">
@@ -426,7 +422,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             >
               -
             </Button>
-            <span className="text-xs text-white">Zoom: {zoom}x</span>
+            <span className="text-xs text-muted-foreground">Zoom: {zoom}x</span>
             <Button
               variant="ghost"
               size="sm"
@@ -435,14 +431,14 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
               +
             </Button>
           </div>
-        </div>
+            </div>
 
-        <div className="relative w-full flex-1 min-h-[200px]">
+            <div className="relative w-full h-[160px]">
           {canScrollLeft && (
             <Button
               variant="ghost"
               size="icon-sm"
-              className="absolute left-2 top-1/2 -translate-y-1/2 z-10"
+              className="absolute left-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
               onClick={() => scrollTimeline("left")}
             >
               <ChevronLeft className="h-5 w-5" />
@@ -452,7 +448,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             <Button
               variant="ghost"
               size="icon-sm"
-              className="absolute right-2 top-1/2 -translate-y-1/2 z-10"
+              className="absolute right-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
               onClick={() => scrollTimeline("right")}
             >
               <ChevronRight className="h-5 w-5" />
@@ -460,7 +456,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
           )}
           <div
             ref={timelineScrollRef}
-            className="overflow-x-auto overflow-y-hidden scrollbar-hide w-full h-full cursor-grab active:cursor-grabbing"
+            className="overflow-x-auto overflow-y-hidden scrollbar-hide w-full h-[160px] cursor-grab active:cursor-grabbing"
             onScroll={updateScrollButtons}
             onMouseDown={handleMouseDown}
             onWheel={(e) => {
@@ -482,12 +478,13 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                 return (
                   <button
                     key={index}
-                    className={`absolute top-0 h-full border-r border-white/10 transition-all ${!selected
-                      ? "bg-white/10 opacity-70"
-                      : currentSegment === index
-                        ? "bg-primary"
-                        : "bg-white/20 hover:bg-white/30"
-                      }`}
+                    className={`absolute top-0 h-full border-r border-border transition-all ${
+                      !selected
+                        ? "bg-muted/70"
+                        : currentSegment === index
+                          ? "bg-primary"
+                          : "bg-muted hover:bg-muted/80"
+                    }`}
                     style={{
                       left: `${(segment.start / duration) * 100}%`,
                       width: `${((segment.end - segment.start) / duration) * 100}%`,
@@ -535,12 +532,12 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                             return next
                           })
                         }
-                        className="border-white/40 bg-transparent dark:bg-transparent data-[state=checked]:!bg-transparent data-[state=checked]:!text-white data-[state=checked]:!border-white dark:data-[state=checked]:!bg-transparent"
+                        className="border-border bg-background/80 data-[state=checked]:!bg-background/80 data-[state=checked]:!text-foreground data-[state=checked]:!border-foreground"
                       />
                     </div>
-                    <div className="flex h-full flex-col items-center justify-center text-xs font-medium text-white">
+                    <div className="flex h-full flex-col items-center justify-center text-xs font-medium text-foreground">
                       <div>S{index + 1}</div>
-                      <div className="text-[10px] opacity-70">{formatTime(segment.start)}</div>
+                      <div className="text-[10px] text-muted-foreground">{formatTime(segment.start)}</div>
                     </div>
                   </button>
                 )
@@ -552,6 +549,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
               />
             </div>
           </div>
+            </div>
         </div>
       </div>
     </div>
