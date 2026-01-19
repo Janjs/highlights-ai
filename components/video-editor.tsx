@@ -384,23 +384,21 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             </Button>
             <Button
               size="sm"
+              variant="secondary"
               onClick={handleExport}
               disabled={isExporting || selectedSegments.size === 0}
-              className="relative overflow-hidden"
+              className="relative overflow-hidden w-[100px]"
             >
               <div
-                className="absolute inset-0 bg-primary/20 transition-all duration-300 ease-in-out"
+                className="absolute inset-0 bg-primary/40 transition-all duration-300 ease-in-out"
                 style={{
                   width: `${exportProgress}%`,
                   opacity: isExporting ? 1 : 0
                 }}
               />
-              <div className="relative flex items-center gap-2 z-10">
+              <div className="relative flex items-center justify-center gap-2 z-10 w-full">
                 {isExporting ? (
-                  <>
-                    <Spinner className="h-4 w-4" />
-                    <span>{exportProgress < 100 ? "Exporting..." : "Done!"}</span>
-                  </>
+                  <span className="text-xs font-semibold">{exportProgress}%</span>
                 ) : (
                   <>
                     <Download className="h-4 w-4" />
