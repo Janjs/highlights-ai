@@ -3,12 +3,13 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react"
+import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Kbd } from "@/components/ui/kbd"
 import { Slider } from "@/components/ui/slider"
+import { Spinner } from "@/components/ui/spinner"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { AppIcon } from "@/components/app-icon"
 
@@ -37,6 +38,8 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   const [selectedSegments, setSelectedSegments] = useState<Set<number>>(
     () => new Set(videoData.segments.map((_, i) => i)),
   )
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
   const dragStartRef = useRef({ x: 0, scrollLeft: 0 })
 
   useEffect(() => {
@@ -236,6 +239,63 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     }
   }
 
+  const handleExport = async () => {
+    if (selectedSegments.size === 0) {
+      alert("Please select at least one segment to export")
+      return
+    }
+
+    setIsExporting(true)
+    setExportProgress(0)
+
+    // Simulate progress since we can't get real progress from the single-request API yet
+    const progressInterval = setInterval(() => {
+      setExportProgress((prev) => {
+        if (prev >= 95) return prev
+        return prev + 5
+      })
+    }, 500)
+
+    try {
+      const segmentsToExport = videoData.segments
+        .filter((_, index) => selectedSegments.has(index))
+        .map((seg) => ({ start: seg.start, end: seg.end }))
+
+      const response = await fetch("/api/export", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ segments: segmentsToExport }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Export failed")
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `highlight-export.mp4`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      setExportProgress(100)
+    } catch (error) {
+      console.error("Export error:", error)
+      alert("Failed to export video")
+    } finally {
+      clearInterval(progressInterval)
+      setTimeout(() => {
+        setIsExporting(false)
+        setExportProgress(0)
+      }, 1000)
+    }
+  }
+
   const handleMouseDown = (e: React.MouseEvent) => {
     const container = timelineScrollRef.current
     if (!container) return
@@ -322,9 +382,32 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
               <RotateCcw className="h-4 w-4" />
               New Video
             </Button>
-            <Button size="sm">
-              <Download className="h-4 w-4" />
-              Export
+            <Button
+              size="sm"
+              onClick={handleExport}
+              disabled={isExporting || selectedSegments.size === 0}
+              className="relative overflow-hidden"
+            >
+              <div
+                className="absolute inset-0 bg-primary/20 transition-all duration-300 ease-in-out"
+                style={{
+                  width: `${exportProgress}%`,
+                  opacity: isExporting ? 1 : 0
+                }}
+              />
+              <div className="relative flex items-center gap-2 z-10">
+                {isExporting ? (
+                  <>
+                    <Spinner className="h-4 w-4" />
+                    <span>{exportProgress < 100 ? "Exporting..." : "Done!"}</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Export
+                  </>
+                )}
+              </div>
             </Button>
             <ThemeSwitcher />
           </div>
@@ -332,291 +415,303 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
 
         <div className="rounded-xl overflow-hidden bg-black relative aspect-video">
           <video
-          ref={videoRef}
-          src={videoData.url}
-          className="h-full w-full object-contain"
-          onClick={togglePlay}
-          preload="auto"
-          playsInline
-          onError={(e) => {
-            const video = e.target as HTMLVideoElement
-            console.error("[VIDEO] Error loading video")
-            console.error("[VIDEO] Video src:", videoData.url)
-            console.error("[VIDEO] Error code:", video.error?.code)
-            console.error("[VIDEO] Error message:", video.error?.message)
-            console.error("[VIDEO] Network state:", video.networkState)
-            console.error("[VIDEO] Ready state:", video.readyState)
-          }}
-          onLoadStart={() => console.log("[VIDEO] Load started")}
-          onLoadedMetadata={() => console.log("[VIDEO] Metadata loaded")}
-          onCanPlay={() => console.log("[VIDEO] Can play")}
-        />
+            ref={videoRef}
+            src={videoData.url}
+            className="h-full w-full object-contain"
+            onClick={togglePlay}
+            preload="auto"
+            playsInline
+            onError={(e) => {
+              const video = e.target as HTMLVideoElement
+              console.error("[VIDEO] Error loading video")
+              console.error("[VIDEO] Video src:", videoData.url)
+              console.error("[VIDEO] Error code:", video.error?.code)
+              console.error("[VIDEO] Error message:", video.error?.message)
+              console.error("[VIDEO] Network state:", video.networkState)
+              console.error("[VIDEO] Ready state:", video.readyState)
+            }}
+            onLoadStart={() => console.log("[VIDEO] Load started")}
+            onLoadedMetadata={() => console.log("[VIDEO] Metadata loaded")}
+            onCanPlay={() => console.log("[VIDEO] Can play")}
+          />
 
-        {/* Video Controls Overlay */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black via-black/80 to-transparent p-4">
-          <div className="space-y-3">
-            {/* Progress Bar */}
-            <div
-              className="relative w-full h-6 flex items-center cursor-pointer"
-              onMouseDown={(e) => {
-                if (e.button !== 0) return
-                const bar = e.currentTarget
-                const seek = (clientX: number) => {
-                  const r = bar.getBoundingClientRect()
-                  const ratio = Math.max(0, Math.min(1, (clientX - r.left) / r.width))
-                  handleSeek([ratio * duration])
-                }
-                seek(e.clientX)
-                const onMove = (e: MouseEvent) => seek(e.clientX)
-                const onUp = () => {
-                  document.removeEventListener("mousemove", onMove)
-                  document.removeEventListener("mouseup", onUp)
-                }
-                document.addEventListener("mousemove", onMove)
-                document.addEventListener("mouseup", onUp)
-              }}
-            >
-              <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full overflow-hidden bg-secondary pointer-events-none">
-                {duration > 0 &&
-                  videoData.segments.map((seg, i) => {
-                    const selected = selectedSegments.has(i)
-                    return (
-                      <div
-                        key={i}
-                        className={`absolute top-0 h-full ${
-                          selected
+          {/* Video Controls Overlay */}
+          <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black via-black/80 to-transparent p-4">
+            <div className="space-y-3">
+              {/* Progress Bar */}
+              <div
+                className="relative w-full h-6 flex items-center cursor-pointer"
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return
+                  const bar = e.currentTarget
+                  const seek = (clientX: number) => {
+                    const r = bar.getBoundingClientRect()
+                    const ratio = Math.max(0, Math.min(1, (clientX - r.left) / r.width))
+                    handleSeek([ratio * duration])
+                  }
+                  seek(e.clientX)
+                  const onMove = (e: MouseEvent) => seek(e.clientX)
+                  const onUp = () => {
+                    document.removeEventListener("mousemove", onMove)
+                    document.removeEventListener("mouseup", onUp)
+                  }
+                  document.addEventListener("mousemove", onMove)
+                  document.addEventListener("mouseup", onUp)
+                }}
+              >
+                <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full overflow-hidden bg-secondary pointer-events-none">
+                  {duration > 0 &&
+                    videoData.segments.map((seg, i) => {
+                      const selected = selectedSegments.has(i)
+                      return (
+                        <div
+                          key={i}
+                          className={`absolute top-0 h-full ${selected
                             ? currentSegment === i
                               ? "bg-primary"
                               : "bg-primary/25"
                             : "bg-muted/50"
-                        }`}
-                        style={{
-                          left: `${(seg.start / duration) * 100}%`,
-                          width: `${((seg.end - seg.start) / duration) * 100}%`,
-                        }}
-                      />
-                    )
-                  })}
-              </div>
-              <div
-                className="absolute left-0 top-1/2 -translate-y-1/2 h-2 rounded-l-full bg-primary/30 pointer-events-none"
-                style={{
-                  width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-                }}
-              />
-              <div
-                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 border-primary bg-background pointer-events-none"
-                style={{
-                  left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-                }}
-              />
-            </div>
-            <div className="flex justify-between text-xs text-white/70">
-              <span>{formatTime(currentTime)}</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-
-            {/* Playback Controls */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
-                  {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                </Button>
-                <Slider
-                  value={[isMuted ? 0 : volume]}
-                  max={1}
-                  step={0.01}
-                  onValueChange={handleVolumeChange}
-                  className="w-24"
+                            }`}
+                          style={{
+                            left: `${(seg.start / duration) * 100}%`,
+                            width: `${((seg.end - seg.start) / duration) * 100}%`,
+                          }}
+                        />
+                      )
+                    })}
+                </div>
+                <div
+                  className="absolute left-0 top-1/2 -translate-y-1/2 h-2 rounded-l-full bg-primary/30 pointer-events-none"
+                  style={{
+                    width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                  }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 border-primary bg-background pointer-events-none"
+                  style={{
+                    left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                  }}
                 />
               </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={playPreviousSegment}
-                  disabled={getPrevSelected(currentSegment) === null}
-                >
-                  <SkipBack className="h-5 w-5" />
-                </Button>
-                <Button size="icon-lg" onClick={togglePlay}>
-                  {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={playNextSegment}
-                  disabled={getNextSelected(currentSegment) === null}
-                >
-                  <SkipForward className="h-5 w-5" />
-                </Button>
+              <div className="flex justify-between text-xs text-white/70">
+                <span>{formatTime(currentTime)}</span>
+                <span>{formatTime(duration)}</span>
               </div>
 
-              <div className="w-32" />
+              {/* Playback Controls */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
+                    {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                  </Button>
+                  <Slider
+                    value={[isMuted ? 0 : volume]}
+                    max={1}
+                    step={0.01}
+                    onValueChange={handleVolumeChange}
+                    className="w-24"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={playPreviousSegment}
+                    disabled={getPrevSelected(currentSegment) === null}
+                  >
+                    <SkipBack className="h-5 w-5" />
+                  </Button>
+                  <Button size="icon-lg" onClick={togglePlay}>
+                    {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={playNextSegment}
+                    disabled={getNextSelected(currentSegment) === null}
+                  >
+                    <SkipForward className="h-5 w-5" />
+                  </Button>
+                </div>
+
+                <div className="w-32" />
+              </div>
             </div>
           </div>
-        </div>
         </div>
 
         <div className="flex flex-col border rounded-lg bg-card/50">
-            <div className="px-4 py-3 flex items-center justify-between border-b">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground min-w-[12rem] tabular-nums">
-              Segment {currentSegment + 1} of {videoData.segments.length} · {selectedSegments.size} in sequence
-            </span>
-            <Badge variant="outline" className="leading-none">
-              <Kbd className="h-4 min-w-4 text-[10px]">⌘</Kbd>
-              + Click
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setZoom(Math.max(0.5, zoom - 0.5))}
-            >
-              -
-            </Button>
-            <span className="text-xs text-muted-foreground">Zoom: {zoom}x</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setZoom(Math.min(10, zoom + 0.5))}
-            >
-              +
-            </Button>
-          </div>
+          <div className="px-4 py-3 flex items-center justify-between border-b">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-foreground min-w-[12rem] tabular-nums">
+                Segment {currentSegment + 1} of {videoData.segments.length} · {selectedSegments.size} in sequence
+              </span>
+              <Badge variant="outline" className="leading-none">
+                <Kbd className="h-4 min-w-4 text-[10px]">⌘</Kbd>
+                + Click
+              </Badge>
             </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setZoom(Math.max(0.5, zoom - 0.5))}
+              >
+                -
+              </Button>
+              <span className="text-xs text-muted-foreground">Zoom: {zoom}x</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setZoom(Math.min(10, zoom + 0.5))}
+              >
+                +
+              </Button>
+            </div>
+          </div>
 
-            <div className="relative w-full h-[160px] overflow-visible">
-          {duration > 0 && (
+          <div className="relative w-full h-[160px] overflow-visible">
+            {duration > 0 && (
+              <div
+                className="pointer-events-none absolute z-30 -translate-x-1/2"
+                style={{
+                  left: (currentTime / duration) * timelineScroll.scrollWidth - timelineScroll.scrollLeft,
+                  top: -8,
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="h-5 w-5 text-secondary-foreground"
+                >
+                  <path d="M12 18L4 6h16L12 18z" />
+                </svg>
+              </div>
+            )}
+            {canScrollLeft && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="absolute left-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
+                onClick={() => scrollTimeline("left")}
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </Button>
+            )}
+            {canScrollRight && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="absolute right-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
+                onClick={() => scrollTimeline("right")}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </Button>
+            )}
             <div
-              className="pointer-events-none absolute z-30 -translate-x-1/2"
-              style={{
-                left: (currentTime / duration) * timelineScroll.scrollWidth - timelineScroll.scrollLeft,
-                top: -8,
+              ref={timelineScrollRef}
+              className="overflow-x-auto overflow-y-hidden scrollbar-hide w-full h-[160px] cursor-grab active:cursor-grabbing"
+              onScroll={updateScrollButtons}
+              onMouseDown={handleMouseDown}
+              onWheel={(e) => {
+                if (e.shiftKey) {
+                  e.preventDefault()
+                  const container = timelineScrollRef.current
+                  if (container) {
+                    container.scrollLeft += e.deltaY
+                  }
+                }
               }}
             >
-              <ChevronDown className="h-4 w-4 text-border" />
-            </div>
-          )}
-          {canScrollLeft && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="absolute left-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
-              onClick={() => scrollTimeline("left")}
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-          )}
-          {canScrollRight && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="absolute right-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
-              onClick={() => scrollTimeline("right")}
-            >
-              <ChevronRight className="h-5 w-5" />
-            </Button>
-          )}
-          <div
-            ref={timelineScrollRef}
-            className="overflow-x-auto overflow-y-hidden scrollbar-hide w-full h-[160px] cursor-grab active:cursor-grabbing"
-            onScroll={updateScrollButtons}
-            onMouseDown={handleMouseDown}
-            onWheel={(e) => {
-              if (e.shiftKey) {
-                e.preventDefault()
-                const container = timelineScrollRef.current
-                if (container) {
-                  container.scrollLeft += e.deltaY
-                }
-              }
-            }}
-          >
-            <div
-              className="relative h-full min-w-full bg-black/40"
-              style={{ width: `${zoom * 100}%`, minHeight: "100%" }}
-            >
-              {videoData.segments.map((segment, index) => {
-                const selected = selectedSegments.has(index)
-                return (
-                  <button
-                    key={index}
-                    className={`absolute top-0 h-full border-r border-border transition-all ${
-                      !selected
+              <div
+                className="relative h-full min-w-full bg-black/40"
+                style={{ width: `${zoom * 100}%`, minHeight: "100%" }}
+              >
+                {videoData.segments.map((segment, index) => {
+                  const selected = selectedSegments.has(index)
+                  return (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      key={index}
+                      className={`absolute top-0 h-full border-r border-border transition-all ${!selected
                         ? "bg-muted/50"
                         : currentSegment === index
                           ? "bg-primary"
                           : "bg-primary/25 hover:bg-primary/30"
-                    }`}
-                    style={{
-                      left: `${(segment.start / duration) * 100}%`,
-                      width: `${((segment.end - segment.start) / duration) * 100}%`,
-                    }}
-                    onClick={(e) => {
-                      if (!isDragging) {
-                        if (e.metaKey || e.ctrlKey) {
-                          setSelectedSegments((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(index)) {
-                              if (prev.size === videoData.segments.length) return new Set([index])
-                              next.delete(index)
-                            } else {
-                              next.add(index)
-                            }
-                            return next
-                          })
-                        } else {
+                        }`}
+                      style={{
+                        left: `${(segment.start / duration) * 100}%`,
+                        width: `${((segment.end - segment.start) / duration) * 100}%`,
+                      }}
+                      onClick={(e) => {
+                        if (!isDragging) {
+                          if (e.metaKey || e.ctrlKey) {
+                            setSelectedSegments((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(index)) {
+                                if (prev.size === videoData.segments.length) return new Set([index])
+                                next.delete(index)
+                              } else {
+                                next.add(index)
+                              }
+                              return next
+                            })
+                          } else {
+                            jumpToSegment(index)
+                          }
+                        }
+                      }}
+                      onMouseDown={(e) => {
+                        if (e.button === 0) {
+                          e.stopPropagation()
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
                           jumpToSegment(index)
                         }
-                      }
-                    }}
-                    onMouseDown={(e) => {
-                      if (e.button === 0) {
-                        e.stopPropagation()
-                      }
-                    }}
-                  >
-                    <div
-                      className="absolute top-1 right-1"
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
+                      }}
                     >
-                      <Checkbox
-                        checked={selected}
-                        onCheckedChange={(checked) =>
-                          setSelectedSegments((prev) => {
-                            const next = new Set(prev)
-                            if (checked === true) {
-                              next.add(index)
-                            } else {
-                              if (prev.size === videoData.segments.length) return new Set([index])
-                              next.delete(index)
-                            }
-                            return next
-                          })
-                        }
-                        className="border-border bg-background/80 data-[state=checked]:!bg-background/80 data-[state=checked]:!text-foreground data-[state=checked]:!border-foreground"
-                      />
+                      <div
+                        className="absolute top-1 right-1"
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        <Checkbox
+                          checked={selected}
+                          onCheckedChange={(checked) =>
+                            setSelectedSegments((prev) => {
+                              const next = new Set(prev)
+                              if (checked === true) {
+                                next.add(index)
+                              } else {
+                                if (prev.size === videoData.segments.length) return new Set([index])
+                                next.delete(index)
+                              }
+                              return next
+                            })
+                          }
+                          className="border-border bg-background/80 data-[state=checked]:!bg-background/80 data-[state=checked]:!text-foreground data-[state=checked]:!border-foreground"
+                        />
+                      </div>
+                      <div className="flex h-full flex-col items-center justify-center text-xs font-medium text-foreground">
+                        <div>S{index + 1}</div>
+                        <div className="text-[10px] text-muted-foreground">{formatTime(segment.start)}</div>
+                      </div>
                     </div>
-                    <div className="flex h-full flex-col items-center justify-center text-xs font-medium text-foreground">
-                      <div>S{index + 1}</div>
-                      <div className="text-[10px] text-muted-foreground">{formatTime(segment.start)}</div>
-                    </div>
-                  </button>
-                )
-              })}
-              {/* Playhead */}
-              <div
-                className="pointer-events-none absolute top-0 h-full w-0.5 -translate-x-1/2 z-20 bg-secondary-foreground"
-                style={{ left: `${(currentTime / duration) * 100}%` }}
-              />
+                  )
+                })}
+                {/* Playhead */}
+                <div
+                  className="pointer-events-none absolute top-0 h-full w-0.5 -translate-x-1/2 z-20 bg-secondary-foreground"
+                  style={{ left: `${(currentTime / duration) * 100}%` }}
+                />
+              </div>
             </div>
           </div>
-            </div>
         </div>
       </div>
     </div>
