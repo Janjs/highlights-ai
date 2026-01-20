@@ -47,6 +47,12 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   }, [videoData.url])
 
   useEffect(() => {
+    if (duration > 0) {
+      setZoom(duration < 180 ? 1 : 3)
+    }
+  }, [duration])
+
+  useEffect(() => {
     const video = videoRef.current
     if (!video) return
 
@@ -384,19 +390,19 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             </Button>
             <Button
               size="sm"
-              variant="default"
+              variant={isExporting ? "secondary" : "default"}
               onClick={handleExport}
-              disabled={isExporting || selectedSegments.size === 0}
-              className="relative overflow-hidden w-[100px]"
+              disabled={selectedSegments.size === 0}
+              className={`relative overflow-hidden w-[100px] ${isExporting ? "pointer-events-none" : ""}`}
             >
               <div
-                className="absolute inset-0 bg-primary-foreground/30 transition-all duration-300 ease-in-out"
+                className="absolute inset-0 bg-primary transition-all duration-300 ease-in-out"
                 style={{
                   width: `${exportProgress}%`,
                   opacity: isExporting ? 1 : 0
                 }}
               />
-              <div className="relative flex items-center justify-center gap-2 z-10 w-full">
+              <div className="relative flex items-center justify-center gap-2 z-10 w-full mix-blend-difference text-white">
                 {isExporting ? (
                   <span className="text-xs font-semibold">{exportProgress}%</span>
                 ) : (
@@ -542,12 +548,13 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
         <div className="flex flex-col border rounded-lg bg-card/50">
           <div className="px-4 py-3 flex items-center justify-between border-b">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-foreground min-w-[12rem] tabular-nums">
-                Segment {currentSegment + 1} of {videoData.segments.length} · {selectedSegments.size} in sequence
+              <span className="text-sm font-medium text-foreground min-w-[3rem] tabular-nums">
+                Clip {currentSegment + 1} of {videoData.segments.length}
               </span>
-              <Badge variant="outline" className="leading-none">
+              <Badge variant="outline" className="gap-1">
                 <Kbd className="h-4 min-w-4 text-[10px]">⌘</Kbd>
-                + Click
+                <span className="text-muted-foreground">+</span>
+                <span>Click</span>
               </Badge>
             </div>
             <div className="flex items-center gap-2">
