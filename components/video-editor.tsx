@@ -384,13 +384,13 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             </Button>
             <Button
               size="sm"
-              variant="secondary"
+              variant="default"
               onClick={handleExport}
               disabled={isExporting || selectedSegments.size === 0}
               className="relative overflow-hidden w-[100px]"
             >
               <div
-                className="absolute inset-0 bg-primary/40 transition-all duration-300 ease-in-out"
+                className="absolute inset-0 bg-primary-foreground/30 transition-all duration-300 ease-in-out"
                 style={{
                   width: `${exportProgress}%`,
                   opacity: isExporting ? 1 : 0
