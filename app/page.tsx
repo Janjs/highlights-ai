@@ -4,12 +4,19 @@ import { useState, useEffect } from "react"
 import { VideoUpload } from "@/components/video-upload"
 import { VideoEditor } from "@/components/video-editor"
 
+interface BallDetection {
+  time: number
+  frame: number
+  boxes: Array<{ x: number; y: number; w: number; h: number; confidence: number }>
+}
+
 export default function Home() {
   const useCache = process.env.NEXT_PUBLIC_CACHE === "1" || process.env.NEXT_PUBLIC_CACHE === "true"
-  
+
   const [videoData, setVideoData] = useState<{
     url: string
     segments: Array<{ start: number; end: number; url: string }>
+    ballDetections?: BallDetection[]
   } | null>(null)
   const [isLoadingCache, setIsLoadingCache] = useState(useCache)
 
@@ -23,7 +30,7 @@ export default function Home() {
       try {
         const response = await fetch("/api/cache")
         const data = await response.json()
-        
+
         if (data.exists && data.scenes) {
           const videoUrl = "/api/video"
           const segments = data.scenes.map((scene: { start: number; end: number }) => ({
@@ -31,7 +38,7 @@ export default function Home() {
             end: scene.end,
             url: videoUrl,
           }))
-          
+
           setVideoData({
             url: videoUrl,
             segments,

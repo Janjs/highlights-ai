@@ -10,10 +10,17 @@ import { Spinner } from "@/components/ui/spinner"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { AppIcon } from "@/components/app-icon"
 
+interface BallDetection {
+  time: number
+  frame: number
+  boxes: Array<{ x: number; y: number; w: number; h: number; confidence: number }>
+}
+
 interface VideoUploadProps {
   onVideoProcessed: (data: {
     url: string
     segments: Array<{ start: number; end: number; url: string }>
+    ballDetections?: BallDetection[]
   }) => void
 }
 
@@ -40,7 +47,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
     try {
       const response = await fetch("/api/cache")
       const data = await response.json()
-      
+
       if (data.exists && data.scenes) {
         const videoUrl = "/api/video"
         const segments = data.scenes.map((scene: { start: number; end: number }) => ({
@@ -48,7 +55,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
           end: scene.end,
           url: videoUrl,
         }))
-        
+
         onVideoProcessed({
           url: videoUrl,
           segments,
@@ -105,10 +112,11 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
       const parseStart = performance.now()
       console.log("[CLIENT] Parsing response data...")
       const data = await response.json()
-      const { scenes } = data
+      const { scenes, ballDetections } = data
       const parseEnd = performance.now()
       console.log(`[CLIENT] Parsing complete in ${(parseEnd - parseStart).toFixed(2)}ms`)
       console.log(`[CLIENT] Received ${scenes.length} scenes:`, scenes)
+      console.log(`[CLIENT] Received ${ballDetections?.length || 0} ball detection frames`)
 
       setProcessingStage("Creating segments...")
 
@@ -132,6 +140,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
       onVideoProcessed({
         url: videoUrl,
         segments,
+        ballDetections,
       })
       console.log("[CLIENT] Video processing complete!")
     } catch (error) {

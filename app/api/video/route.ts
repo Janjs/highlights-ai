@@ -15,11 +15,16 @@ export async function GET(request: NextRequest) {
         const fileSize = fileStats.size
 
         const rangeHeader = request.headers.get("range")
-        
+
         if (rangeHeader) {
             const parts = rangeHeader.replace(/bytes=/, "").split("-")
-            const start = parseInt(parts[0], 10)
-            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+            let start = parseInt(parts[0], 10)
+            let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+
+            // Clamp values to valid range
+            start = Math.max(0, Math.min(start, fileSize - 1))
+            end = Math.max(start, Math.min(end, fileSize - 1))
+
             const chunkSize = end - start + 1
 
             const stream = createReadStream(videoPath, { start, end })

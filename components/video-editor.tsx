@@ -2,8 +2,8 @@
 
 import type React from "react"
 
-import { useState, useRef, useEffect } from "react"
-import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight } from "lucide-react"
+import { useState, useRef, useEffect, useCallback } from "react"
+import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight, Eye, EyeOff } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -13,16 +13,25 @@ import { Spinner } from "@/components/ui/spinner"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { AppIcon } from "@/components/app-icon"
 
+interface BallDetection {
+  time: number
+  frame: number
+  boxes: Array<{ x: number; y: number; w: number; h: number; confidence: number }>
+}
+
 interface VideoEditorProps {
   videoData: {
     url: string
     segments: Array<{ start: number; end: number; url: string }>
+    ballDetections?: BallDetection[]
   }
   onReset: () => void
 }
 
 export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const videoContainerRef = useRef<HTMLDivElement>(null)
   const timelineScrollRef = useRef<HTMLDivElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -40,6 +49,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   )
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
+  const [showBallTracking, setShowBallTracking] = useState(true)
   const dragStartRef = useRef({ x: 0, scrollLeft: 0 })
 
   useEffect(() => {
@@ -375,6 +385,101 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     }
   }, [currentTime, duration, zoom, isPlaying])
 
+  // Ball detection drawing effect
+  const drawBallDetections = useCallback(() => {
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    const container = videoContainerRef.current
+    if (!video || !canvas || !container || !videoData.ballDetections?.length) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    // Match canvas size to container
+    const containerRect = container.getBoundingClientRect()
+    if (canvas.width !== containerRect.width || canvas.height !== containerRect.height) {
+      canvas.width = containerRect.width
+      canvas.height = containerRect.height
+    }
+
+    // Clear previous drawings
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    if (!showBallTracking) return
+
+    // Find the closest detection to current time
+    const currentVideoTime = video.currentTime
+    let closestDetection = videoData.ballDetections[0]
+    let minDiff = Math.abs(closestDetection.time - currentVideoTime)
+
+    for (const detection of videoData.ballDetections) {
+      const diff = Math.abs(detection.time - currentVideoTime)
+      if (diff < minDiff) {
+        minDiff = diff
+        closestDetection = detection
+      }
+    }
+
+    // Only draw if we're within 0.2 seconds of a detection
+    if (minDiff > 0.2 || !closestDetection.boxes.length) return
+
+    // Calculate scale factors
+    // The video is displayed with object-contain, so we need to calculate the actual video display area
+    const videoAspect = video.videoWidth / video.videoHeight
+    const containerAspect = containerRect.width / containerRect.height
+
+    let displayWidth: number, displayHeight: number, offsetX: number, offsetY: number
+
+    if (videoAspect > containerAspect) {
+      // Video is wider than container
+      displayWidth = containerRect.width
+      displayHeight = containerRect.width / videoAspect
+      offsetX = 0
+      offsetY = (containerRect.height - displayHeight) / 2
+    } else {
+      // Video is taller than container
+      displayHeight = containerRect.height
+      displayWidth = containerRect.height * videoAspect
+      offsetX = (containerRect.width - displayWidth) / 2
+      offsetY = 0
+    }
+
+    const scaleX = displayWidth / video.videoWidth
+    const scaleY = displayHeight / video.videoHeight
+
+    // Draw bounding boxes
+    ctx.strokeStyle = "#ff6600"
+    ctx.lineWidth = 3
+    ctx.fillStyle = "rgba(255, 102, 0, 0.1)"
+
+    for (const box of closestDetection.boxes) {
+      const x = offsetX + box.x * scaleX
+      const y = offsetY + box.y * scaleY
+      const w = box.w * scaleX
+      const h = box.h * scaleY
+
+      // Draw filled rectangle
+      ctx.fillRect(x, y, w, h)
+
+      // Draw border
+      ctx.strokeRect(x, y, w, h)
+
+      // Draw confidence label
+      ctx.fillStyle = "#ff6600"
+      ctx.font = "bold 12px sans-serif"
+      const label = `${Math.round(box.confidence * 100)}%`
+      const labelWidth = ctx.measureText(label).width + 8
+      ctx.fillRect(x, y - 20, labelWidth, 20)
+      ctx.fillStyle = "white"
+      ctx.fillText(label, x + 4, y - 6)
+      ctx.fillStyle = "rgba(255, 102, 0, 0.1)"
+    }
+  }, [currentTime, showBallTracking, videoData.ballDetections])
+
+  useEffect(() => {
+    drawBallDetections()
+  }, [drawBallDetections])
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-6 md:px-10 lg:px-12 py-6 md:py-6 flex flex-col gap-6">
@@ -413,11 +518,22 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                 )}
               </div>
             </Button>
+            {videoData.ballDetections && videoData.ballDetections.length > 0 && (
+              <Button
+                variant={showBallTracking ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowBallTracking(!showBallTracking)}
+                title={showBallTracking ? "Hide ball tracking" : "Show ball tracking"}
+              >
+                {showBallTracking ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                Ball
+              </Button>
+            )}
             <ThemeSwitcher />
           </div>
         </div>
 
-        <div className="rounded-xl overflow-hidden bg-black relative aspect-video">
+        <div ref={videoContainerRef} className="rounded-xl overflow-hidden bg-black relative aspect-video">
           <video
             ref={videoRef}
             src={videoData.url}
@@ -437,6 +553,13 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             onLoadStart={() => console.log("[VIDEO] Load started")}
             onLoadedMetadata={() => console.log("[VIDEO] Metadata loaded")}
             onCanPlay={() => console.log("[VIDEO] Can play")}
+          />
+
+          {/* Ball Detection Overlay Canvas */}
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{ width: "100%", height: "100%" }}
           />
 
           {/* Video Controls Overlay */}
@@ -714,6 +837,22 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                   className="pointer-events-none absolute top-0 h-full w-0.5 -translate-x-1/2 z-20 bg-secondary-foreground"
                   style={{ left: `${(currentTime / duration) * 100}%` }}
                 />
+                {/* Ball Detection Markers */}
+                {showBallTracking && videoData.ballDetections && duration > 0 && videoData.ballDetections
+                  .filter(detection => detection.boxes.length > 0)
+                  .map((detection, index) => (
+                    <div
+                      key={`ball-${index}`}
+                      className="pointer-events-none absolute bottom-1 w-4 h-4 -translate-x-1/2 z-10"
+                      style={{ left: `${(detection.time / duration) * 100}%` }}
+                      title={`Ball detected at ${detection.time.toFixed(1)}s`}
+                    >
+                      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+                        <path fill="#f97316" d="M248.37 41.094c-49.643 1.754-98.788 20.64-137.89 56.656L210.53 197.8c31.283-35.635 45.59-88.686 37.84-156.706zm18.126.107c7.646 71.205-7.793 129.56-43.223 169.345L256 243.27 401.52 97.75c-38.35-35.324-86.358-54.18-135.024-56.55zM97.75 110.48c-36.017 39.102-54.902 88.247-56.656 137.89 68.02 7.75 121.07-6.557 156.707-37.84L97.75 110.48zm316.5 0L268.73 256l32.71 32.71c33.815-30.112 81.05-45.78 138.183-45.11 10.088.118 20.49.753 31.176 1.9-2.37-48.665-21.227-96.672-56.55-135.02zM210.545 223.272c-39.785 35.43-98.14 50.87-169.344 43.223 2.37 48.666 21.226 96.675 56.55 135.025L243.27 256l-32.725-32.727zm225.002 38.27c-51.25.042-92.143 14.29-121.348 39.928l100.05 100.05c36.017-39.102 54.902-88.247 56.656-137.89-12.275-1.4-24.074-2.096-35.36-2.087zM256 268.73L110.48 414.25c38.35 35.324 86.358 54.18 135.024 56.55-7.646-71.205 7.793-129.56 43.223-169.345L256 268.73zm45.47 45.47c-31.283 35.635-45.59 88.686-37.84 156.706 49.643-1.754 98.788-20.64 137.89-56.656L301.47 314.2z" />
+                      </svg>
+                    </div>
+                  ))
+                }
               </div>
             </div>
           </div>
