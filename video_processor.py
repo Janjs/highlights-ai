@@ -155,12 +155,14 @@ def detect_balls(video_path: str, frame_skip: int = 5, confidence_threshold: flo
                         cy = pred.get("y", 0)
                         w = pred.get("width", 0)
                         h = pred.get("height", 0)
+                        cls = pred.get("class", "Basketball")
                     else:
                         conf = getattr(pred, 'confidence', 0)
                         cx = getattr(pred, 'x', 0)
                         cy = getattr(pred, 'y', 0)
                         w = getattr(pred, 'width', 0)
                         h = getattr(pred, 'height', 0)
+                        cls = getattr(pred, 'class', 'Basketball')
                     
                     if conf >= confidence_threshold:
                         frame_detections.append({
@@ -168,9 +170,10 @@ def detect_balls(video_path: str, frame_skip: int = 5, confidence_threshold: flo
                             "y": round(cy - h/2),
                             "w": round(w),
                             "h": round(h),
-                            "confidence": round(conf, 3)
+                            "confidence": round(conf, 3),
+                            "class": cls
                         })
-                        logger.debug(f"   Frame {frame_count} ({timestamp:.2f}s): Ball at ({cx:.0f}, {cy:.0f}) conf={conf:.2f}")
+                        logger.debug(f"   Frame {frame_count} ({timestamp:.2f}s): {cls} at ({cx:.0f}, {cy:.0f}) conf={conf:.2f}")
             
             except Exception as e:
                 logger.warning(f"   Error processing frame {frame_count}: {e}")
@@ -238,18 +241,26 @@ def process_video():
         scenes = detect_scenes(video_path)
         scene_time = time.time() - scene_start
         
-        # Ball detection
-        ball_start = time.time()
-        frame_skip = data.get('frame_skip', 5)
-        ball_detections = detect_balls(video_path, frame_skip=frame_skip)
-        ball_time = time.time() - ball_start
+        # Ball detection (skip if SKIP_DETECTION is set)
+        ball_detections = []
+        ball_time = 0
+        skip_balls = os.getenv('SKIP_DETECTION', 'false').lower() in ('true', '1', 'yes')
+        
+        if skip_balls:
+            logger.info("⏭️ Skipping ball detection (SKIP_DETECTION=true)")
+        else:
+            ball_start = time.time()
+            frame_skip = data.get('frame_skip', 5)
+            ball_detections = detect_balls(video_path, frame_skip=frame_skip)
+            ball_time = time.time() - ball_start
         
         total_time = time.time() - total_start
         
         logger.info("=" * 60)
         logger.info(f"🎉 Processing complete in {total_time:.2f}s")
         logger.info(f"   Scene detection: {scene_time:.2f}s")
-        logger.info(f"   Ball detection: {ball_time:.2f}s")
+        if not skip_balls:
+            logger.info(f"   Ball detection: {ball_time:.2f}s")
         logger.info("=" * 60)
         
         return jsonify({

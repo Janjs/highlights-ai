@@ -12,16 +12,27 @@ export async function GET(request: NextRequest) {
         const cacheDir = path.join(projectRoot, ".cache")
         const videoPath = path.join(cacheDir, "input.mp4")
         const scenesPath = path.join(cacheDir, "scenes.json")
+        const ballDetectionsPath = path.join(cacheDir, "ball_detections.json")
 
         try {
             const videoStats = await stat(videoPath)
             const scenesData = await readFile(scenesPath, "utf-8")
             const scenes = JSON.parse(scenesData)
 
+            // Try to load ball detections (optional)
+            let ballDetections = []
+            try {
+                const ballData = await readFile(ballDetectionsPath, "utf-8")
+                ballDetections = JSON.parse(ballData)
+            } catch {
+                // Ball detections may not exist
+            }
+
             return NextResponse.json({
                 exists: true,
                 videoSize: videoStats.size,
                 scenes,
+                ballDetections,
             })
         } catch (error) {
             return NextResponse.json({
@@ -42,8 +53,9 @@ export async function DELETE() {
         const videoPath = path.join(cacheDir, "input.mp4")
         const originalVideoPath = path.join(cacheDir, "input_original.mp4")
         const scenesPath = path.join(cacheDir, "scenes.json")
+        const ballDetectionsPath = path.join(cacheDir, "ball_detections.json")
 
-        const filesToDelete = [videoPath, originalVideoPath, scenesPath]
+        const filesToDelete = [videoPath, originalVideoPath, scenesPath, ballDetectionsPath]
         const deleted: string[] = []
         const errors: string[] = []
 

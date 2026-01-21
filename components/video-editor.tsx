@@ -16,7 +16,7 @@ import { AppIcon } from "@/components/app-icon"
 interface BallDetection {
   time: number
   frame: number
-  boxes: Array<{ x: number; y: number; w: number; h: number; confidence: number }>
+  boxes: Array<{ x: number; y: number; w: number; h: number; confidence: number; class?: string }>
 }
 
 interface VideoEditorProps {
@@ -76,6 +76,9 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
         setCurrentSegment(segmentIndex)
       }
 
+      // Skip segment-based playback logic if no segments
+      if (videoData.segments.length === 0) return
+
       if (isPlaying && currentSegment >= 0 && currentSegment < videoData.segments.length) {
         const seg = videoData.segments[currentSegment]
         if (video.currentTime >= seg.end - 0.02) {
@@ -90,7 +93,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
         }
       }
 
-      if (isPlaying && !selectedSegments.has(currentSegment)) {
+      if (isPlaying && selectedSegments.size > 0 && !selectedSegments.has(currentSegment)) {
         const next = [...selectedSegments].filter((i) => i > currentSegment).sort((a, b) => a - b)[0]
           ?? [...selectedSegments].sort((a, b) => a - b)[0]
           ?? null
@@ -672,7 +675,7 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
           <div className="px-4 py-3 flex items-center justify-between border-b">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground min-w-[3rem] tabular-nums">
-                Clip {currentSegment + 1} of {videoData.segments.length}
+                Clip {currentSegment + 1} of {Math.max(1, videoData.segments.length)}
               </span>
               <Badge variant="outline" className="gap-1">
                 <Kbd className="h-4 min-w-4 text-[10px]">⌘</Kbd>
@@ -837,21 +840,25 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                   className="pointer-events-none absolute top-0 h-full w-0.5 -translate-x-1/2 z-20 bg-secondary-foreground"
                   style={{ left: `${(currentTime / duration) * 100}%` }}
                 />
-                {/* Ball Detection Markers */}
+                {/* Made Basket Markers - Only show for Made-basket class */}
                 {showBallTracking && videoData.ballDetections && duration > 0 && videoData.ballDetections
-                  .filter(detection => detection.boxes.length > 0)
-                  .map((detection, index) => (
-                    <div
-                      key={`ball-${index}`}
-                      className="pointer-events-none absolute bottom-1 w-4 h-4 -translate-x-1/2 z-10"
-                      style={{ left: `${(detection.time / duration) * 100}%` }}
-                      title={`Ball detected at ${detection.time.toFixed(1)}s`}
-                    >
-                      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-                        <path fill="#f97316" d="M248.37 41.094c-49.643 1.754-98.788 20.64-137.89 56.656L210.53 197.8c31.283-35.635 45.59-88.686 37.84-156.706zm18.126.107c7.646 71.205-7.793 129.56-43.223 169.345L256 243.27 401.52 97.75c-38.35-35.324-86.358-54.18-135.024-56.55zM97.75 110.48c-36.017 39.102-54.902 88.247-56.656 137.89 68.02 7.75 121.07-6.557 156.707-37.84L97.75 110.48zm316.5 0L268.73 256l32.71 32.71c33.815-30.112 81.05-45.78 138.183-45.11 10.088.118 20.49.753 31.176 1.9-2.37-48.665-21.227-96.672-56.55-135.02zM210.545 223.272c-39.785 35.43-98.14 50.87-169.344 43.223 2.37 48.666 21.226 96.675 56.55 135.025L243.27 256l-32.725-32.727zm225.002 38.27c-51.25.042-92.143 14.29-121.348 39.928l100.05 100.05c36.017-39.102 54.902-88.247 56.656-137.89-12.275-1.4-24.074-2.096-35.36-2.087zM256 268.73L110.48 414.25c38.35 35.324 86.358 54.18 135.024 56.55-7.646-71.205 7.793-129.56 43.223-169.345L256 268.73zm45.47 45.47c-31.283 35.635-45.59 88.686-37.84 156.706 49.643-1.754 98.788-20.64 137.89-56.656L301.47 314.2z" />
-                      </svg>
-                    </div>
-                  ))
+                  .filter(detection => detection.boxes.some(box => box.class === "Made-basket"))
+                  .flatMap((detection, dIndex) =>
+                    detection.boxes
+                      .filter(box => box.class === "Made-basket")
+                      .map((box, bIndex) => (
+                        <div
+                          key={`basket-${dIndex}-${bIndex}`}
+                          className="pointer-events-none absolute bottom-1 w-4 h-4 -translate-x-1/2 z-10"
+                          style={{ left: `${(detection.time / duration) * 100}%` }}
+                          title={`Made basket at ${detection.time.toFixed(1)}s (${(box.confidence * 100).toFixed(0)}%)`}
+                        >
+                          <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+                            <path fill="#f97316" d="M248.37 41.094c-49.643 1.754-98.788 20.64-137.89 56.656L210.53 197.8c31.283-35.635 45.59-88.686 37.84-156.706zm18.126.107c7.646 71.205-7.793 129.56-43.223 169.345L256 243.27 401.52 97.75c-38.35-35.324-86.358-54.18-135.024-56.55zM97.75 110.48c-36.017 39.102-54.902 88.247-56.656 137.89 68.02 7.75 121.07-6.557 156.707-37.84L97.75 110.48zm316.5 0L268.73 256l32.71 32.71c33.815-30.112 81.05-45.78 138.183-45.11 10.088.118 20.49.753 31.176 1.9-2.37-48.665-21.227-96.672-56.55-135.02zM210.545 223.272c-39.785 35.43-98.14 50.87-169.344 43.223 2.37 48.666 21.226 96.675 56.55 135.025L243.27 256l-32.725-32.727zm225.002 38.27c-51.25.042-92.143 14.29-121.348 39.928l100.05 100.05c36.017-39.102 54.902-88.247 56.656-137.89-12.275-1.4-24.074-2.096-35.36-2.087zM256 268.73L110.48 414.25c38.35 35.324 86.358 54.18 135.024 56.55-7.646-71.205 7.793-129.56 43.223-169.345L256 268.73zm45.47 45.47c-31.283 35.635-45.59 88.686-37.84 156.706 49.643-1.754 98.788-20.64 137.89-56.656L301.47 314.2z" />
+                          </svg>
+                        </div>
+                      ))
+                  )
                 }
               </div>
             </div>

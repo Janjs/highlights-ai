@@ -42,6 +42,7 @@ export default function Home() {
           setVideoData({
             url: videoUrl,
             segments,
+            ballDetections: data.ballDetections || [],
           })
         }
       } catch (error) {

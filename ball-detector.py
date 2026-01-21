@@ -93,12 +93,14 @@ while True:
                     cy = pred.get("y", 0)
                     w = pred.get("width", 0)
                     h = pred.get("height", 0)
+                    cls = pred.get("class", "Basketball")
                 else:
                     conf = getattr(pred, 'confidence', 0)
                     cx = getattr(pred, 'x', 0)
                     cy = getattr(pred, 'y', 0)
                     w = getattr(pred, 'width', 0)
                     h = getattr(pred, 'height', 0)
+                    cls = getattr(pred, 'class', 'Basketball')
                 
                 if conf >= CONFIDENCE_THRESHOLD:
                     frame_detections.append({
@@ -106,9 +108,10 @@ while True:
                         "y": round(cy - h/2),
                         "w": round(w),
                         "h": round(h),
-                        "confidence": round(conf, 3)
+                        "confidence": round(conf, 3),
+                        "class": cls
                     })
-                    print(f"   Frame {frame_count} ({timestamp:.2f}s): Ball at ({cx:.0f}, {cy:.0f}) conf={conf:.2f}")
+                    print(f"   Frame {frame_count} ({timestamp:.2f}s): {cls} at ({cx:.0f}, {cy:.0f}) conf={conf:.2f}")
         
         except Exception as e:
             print(f"   Warning: Error processing frame {frame_count}: {e}")
