@@ -1,2 +1,0 @@
-scenedetect[opencv]>=0.6
-ultralytics>=8.0

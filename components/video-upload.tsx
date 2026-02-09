@@ -2,33 +2,39 @@
 
 import type React from "react"
 
-import { useState, useCallback, useEffect } from "react"
-import { Upload, Film, History } from "lucide-react"
+import { useState, useCallback, useEffect, useRef } from "react"
+import { Upload, Film, History, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Spinner } from "@/components/ui/spinner"
+import { Progress } from "@/components/ui/progress"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { AppIcon } from "@/components/app-icon"
-
-interface BallDetection {
-  time: number
-  frame: number
-  boxes: Array<{ x: number; y: number; w: number; h: number; confidence: number }>
-}
 
 interface VideoUploadProps {
   onVideoProcessed: (data: {
     url: string
     segments: Array<{ start: number; end: number; url: string }>
-    ballDetections?: BallDetection[]
   }) => void
+}
+
+type ProcessingStage = "uploading" | "processing" | "done"
+
+const STAGE_LABELS: Record<ProcessingStage, string> = {
+  uploading: "Uploading video...",
+  processing: "Detecting scenes...",
+  done: "Done!",
 }
 
 export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [processingStage, setProcessingStage] = useState("")
+  const [stage, setStage] = useState<ProcessingStage>("uploading")
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [estimatedProgress, setEstimatedProgress] = useState(0)
   const [hasCache, setHasCache] = useState(false)
+  const estimateTimerRef = useRef<ReturnType<typeof setInterval>>(null)
+  const estimateStartRef = useRef(0)
+  const estimatedDurationRef = useRef(0)
 
   useEffect(() => {
     const checkCache = async () => {
@@ -56,16 +62,156 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
           url: videoUrl,
         }))
 
-        onVideoProcessed({
-          url: videoUrl,
-          segments,
-        })
+        onVideoProcessed({ url: videoUrl, segments })
       }
     } catch (error) {
       console.error("[CLIENT] Error loading cached video:", error)
       alert("Failed to load cached video")
     }
   }, [onVideoProcessed])
+
+  const getVideoDuration = (file: File): Promise<number> => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement("video")
+      video.preload = "metadata"
+      const url = URL.createObjectURL(file)
+
+      video.onloadedmetadata = () => {
+        URL.revokeObjectURL(url)
+        if (video.duration && video.duration > 0) {
+          resolve(video.duration)
+        } else {
+          resolve(60)
+        }
+      }
+
+      video.onerror = () => {
+        URL.revokeObjectURL(url)
+        resolve(60)
+      }
+
+      video.src = url
+    })
+  }
+
+  const startEstimatedProgress = (estimatedSeconds: number) => {
+    estimateStartRef.current = Date.now()
+    estimatedDurationRef.current = estimatedSeconds * 1000
+    setEstimatedProgress(0)
+
+    if (estimateTimerRef.current) clearInterval(estimateTimerRef.current)
+
+    estimateTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - estimateStartRef.current
+      const progress = Math.min(95, (elapsed / estimatedDurationRef.current) * 100)
+      setEstimatedProgress(progress)
+    }, 200)
+  }
+
+  const stopEstimatedProgress = () => {
+    if (estimateTimerRef.current) {
+      clearInterval(estimateTimerRef.current)
+      estimateTimerRef.current = null
+    }
+    setEstimatedProgress(100)
+  }
+
+  const formatTimeRemaining = (): string => {
+    if (stage === "uploading") return ""
+    const elapsed = Date.now() - estimateStartRef.current
+    const remaining = Math.max(0, estimatedDurationRef.current - elapsed)
+    const seconds = Math.ceil(remaining / 1000)
+    if (seconds <= 0) return "Almost done..."
+    if (seconds < 60) return `~${seconds}s remaining`
+    const minutes = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `~${minutes}m ${secs}s remaining`
+  }
+
+  const processVideo = async (file: File) => {
+    console.log("[CLIENT] Starting video processing...")
+    console.log(`[CLIENT] File: ${file.name}, Size: ${file.size}, Type: ${file.type}`)
+
+    setIsProcessing(true)
+    setStage("uploading")
+    setUploadProgress(0)
+    setEstimatedProgress(0)
+
+    try {
+      const videoDuration = await getVideoDuration(file)
+      console.log(`[CLIENT] Video duration: ${videoDuration.toFixed(1)}s`)
+
+      const formData = new FormData()
+      formData.append("video", file, file.name)
+
+      const response = await new Promise<Response>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100)
+            setUploadProgress(pct)
+          }
+        })
+
+        xhr.addEventListener("load", () => {
+          const response = new Response(xhr.responseText, {
+            status: xhr.status,
+            statusText: xhr.statusText,
+            headers: { "Content-Type": "application/json" },
+          })
+          resolve(response)
+        })
+
+        xhr.addEventListener("error", () => reject(new Error("Upload failed")))
+        xhr.addEventListener("abort", () => reject(new Error("Upload aborted")))
+
+        xhr.open("POST", "/api/process-video")
+
+        xhr.onreadystatechange = () => {
+          if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
+            setStage("processing")
+            const estimatedProcessing = Math.max(5, videoDuration * 0.3)
+            startEstimatedProgress(estimatedProcessing)
+          }
+        }
+
+        xhr.send(formData)
+      })
+
+      stopEstimatedProgress()
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to process video")
+      }
+
+      const data = await response.json()
+      const { scenes } = data
+      console.log(`[CLIENT] Received ${scenes.length} scenes`)
+
+      setStage("done")
+
+      const videoUrl = "/api/video"
+      const segments = scenes.map((scene: { start: number; end: number }) => ({
+        start: scene.start,
+        end: scene.end,
+        url: videoUrl,
+      }))
+
+      await new Promise((resolve) => setTimeout(resolve, 400))
+
+      onVideoProcessed({ url: videoUrl, segments })
+    } catch (error) {
+      console.error("[CLIENT] Error processing video:", error)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      alert(`Error processing video: ${errorMessage}`)
+      setIsProcessing(false)
+      setStage("uploading")
+      setUploadProgress(0)
+      stopEstimatedProgress()
+    }
+  }
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -77,108 +223,12 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
     setIsDragging(false)
   }, [])
 
-  const processVideo = async (file: File) => {
-    const startTime = performance.now()
-    console.log("[CLIENT] Starting video processing...")
-    console.log(`[CLIENT] File: ${file.name}, Size: ${file.size}, Type: ${file.type}`)
-
-    setIsProcessing(true)
-    setProcessingStage("Uploading video...")
-
-    try {
-      const uploadStart = performance.now()
-      setProcessingStage("Detecting scenes with AI...")
-
-      console.log("[CLIENT] Creating FormData...")
-      const formData = new FormData()
-      formData.append("video", file, file.name)
-
-      console.log("[CLIENT] Sending POST request to /api/process-video...")
-      const response = await fetch("/api/process-video", {
-        method: "POST",
-        body: formData,
-      })
-
-      const uploadEnd = performance.now()
-      console.log(`[CLIENT] Upload complete in ${(uploadEnd - uploadStart).toFixed(2)}ms`)
-      console.log(`[CLIENT] Response status: ${response.status}`)
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        console.error("[CLIENT] Error response:", errorData)
-        throw new Error(errorData.error || "Failed to process video")
-      }
-
-      const parseStart = performance.now()
-      console.log("[CLIENT] Parsing response data...")
-      const data = await response.json()
-      const { scenes, ballDetections } = data
-      const parseEnd = performance.now()
-      console.log(`[CLIENT] Parsing complete in ${(parseEnd - parseStart).toFixed(2)}ms`)
-      console.log(`[CLIENT] Received ${scenes.length} scenes:`, scenes)
-      console.log(`[CLIENT] Received ${ballDetections?.length || 0} ball detection frames`)
-
-      setProcessingStage("Creating segments...")
-
-      const videoUrl = "/api/video"
-      console.log("[CLIENT] Using server video URL:", videoUrl)
-
-      const segments = scenes.map((scene: { start: number; end: number }) => ({
-        start: scene.start,
-        end: scene.end,
-        url: videoUrl,
-      }))
-
-      console.log("[CLIENT] Segments created:", segments)
-
-      const totalTime = performance.now() - startTime
-      console.log(`[CLIENT] Total processing time: ${totalTime.toFixed(2)}ms (${(totalTime / 1000).toFixed(2)}s)`)
-
-      await new Promise((resolve) => setTimeout(resolve, 300))
-
-      console.log("[CLIENT] Calling onVideoProcessed...")
-      onVideoProcessed({
-        url: videoUrl,
-        segments,
-        ballDetections,
-      })
-      console.log("[CLIENT] Video processing complete!")
-    } catch (error) {
-      console.error("[CLIENT] Error processing video:", error)
-      const errorMessage = error instanceof Error ? error.message : "Unknown error"
-      alert(`Error processing video: ${errorMessage}`)
-      setIsProcessing(false)
-      setProcessingStage("")
-    }
-  }
-
-  const getVideoDuration = (url: string): Promise<number> => {
-    return new Promise((resolve, reject) => {
-      const video = document.createElement("video")
-      video.preload = "metadata"
-
-      video.onloadedmetadata = () => {
-        if (video.duration && video.duration > 0) {
-          resolve(video.duration)
-        } else {
-          reject(new Error("Invalid video duration"))
-        }
-      }
-
-      video.onerror = () => {
-        reject(new Error("Failed to load video. Please try a different file."))
-      }
-
-      video.src = url
-    })
-  }
-
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
 
     const files = Array.from(e.dataTransfer.files)
-    const videoFile = files.find((file) => file.type.startsWith("video/"))
+    const videoFile = files.find((f) => f.type.startsWith("video/"))
 
     if (videoFile) {
       processVideo(videoFile)
@@ -195,6 +245,17 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
       alert("Please select a video file")
     }
   }, [])
+
+  const currentProgress = stage === "uploading" ? uploadProgress : estimatedProgress
+
+  const stages: { key: ProcessingStage; label: string }[] = [
+    { key: "uploading", label: "Upload" },
+    { key: "processing", label: "Detect scenes" },
+    { key: "done", label: "Ready" },
+  ]
+
+  const stageOrder: ProcessingStage[] = ["uploading", "processing", "done"]
+  const currentStageIndex = stageOrder.indexOf(stage)
 
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
@@ -241,11 +302,54 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
             </Button>
           </div>
         ) : (
-          <div className="space-y-4 rounded-lg bg-muted/30 p-8 text-center">
-            <Spinner className="mx-auto h-12 w-12 text-primary" />
-            <div>
-              <p className="mb-2 text-lg font-medium text-foreground">{processingStage}</p>
-              <p className="text-sm text-muted-foreground">Analyzing video and creating timeline</p>
+          <div className="space-y-6 rounded-lg bg-muted/30 p-8">
+            <div className="flex items-center justify-between">
+              {stages.map((s, i) => {
+                const isCompleted = i < currentStageIndex
+                const isCurrent = i === currentStageIndex
+                return (
+                  <div key={s.key} className="flex flex-1 items-center">
+                    <div className="flex flex-col items-center gap-1.5">
+                      <div
+                        className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
+                          isCompleted
+                            ? "bg-primary text-primary-foreground"
+                            : isCurrent
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {isCompleted ? <Check className="h-4 w-4" /> : i + 1}
+                      </div>
+                      <span
+                        className={`text-xs ${
+                          isCurrent ? "font-medium text-foreground" : "text-muted-foreground"
+                        }`}
+                      >
+                        {s.label}
+                      </span>
+                    </div>
+                    {i < stages.length - 1 && (
+                      <div
+                        className={`mx-3 h-px flex-1 ${
+                          i < currentStageIndex ? "bg-primary" : "bg-border"
+                        }`}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="space-y-2">
+              <Progress value={currentProgress} className="h-2" />
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-foreground">{STAGE_LABELS[stage]}</p>
+                <p className="text-xs text-muted-foreground">
+                  {stage === "uploading" && uploadProgress > 0 && `${uploadProgress}%`}
+                  {stage === "processing" && formatTimeRemaining()}
+                </p>
+              </div>
             </div>
           </div>
         )}

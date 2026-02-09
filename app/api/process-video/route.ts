@@ -127,57 +127,44 @@ export async function POST(request: NextRequest) {
             await writeFile(videoPath, buffer)
         }
 
-        // Call Flask API for scene and ball detection
         const flaskStart = performance.now()
-        console.log("[API] Calling Flask video processor API...")
+        console.log("[API] Calling Flask API for scene detection...")
 
         const flaskPort = process.env.FLASK_PORT || "5001"
-        const flaskUrl = `http://localhost:${flaskPort}/process`
+        const flaskUrl = `http://localhost:${flaskPort}/scenes`
 
         let scenes = []
-        let ballDetections = []
 
         try {
-            // Long timeout for video processing (up to 1 hour)
-            const controller = new AbortController()
-            const timeoutId = setTimeout(() => controller.abort(), 60 * 60 * 1000)
-
-            const flaskResponse = await fetch(flaskUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    video_path: videoPath,
-                    frame_skip: 5
-                }),
-                signal: controller.signal
+            const { Agent, fetch: undiciFetch } = await import("undici")
+            const agent = new Agent({
+                headersTimeout: 60 * 60 * 1000,
+                bodyTimeout: 60 * 60 * 1000,
+                connectTimeout: 30 * 1000,
             })
 
-            clearTimeout(timeoutId)
+            const flaskResponse = await undiciFetch(flaskUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ video_path: videoPath }),
+                dispatcher: agent
+            })
 
             if (!flaskResponse.ok) {
                 throw new Error(`Flask API returned ${flaskResponse.status}`)
             }
 
-            const flaskData = await flaskResponse.json()
+            const flaskData = await flaskResponse.json() as { scenes?: any[] }
             scenes = flaskData.scenes || []
-            ballDetections = flaskData.ballDetections || []
 
             const flaskTime = (performance.now() - flaskStart) / 1000
-            console.log(`[API] Flask processing completed in ${flaskTime.toFixed(2)}s`)
-            console.log(`[API] Received ${scenes.length} scenes, ${ballDetections.length} ball detection frames`)
-
-            if (flaskData.timing) {
-                console.log(`[API] Flask timing: scene=${flaskData.timing.sceneDetection}s, ball=${flaskData.timing.ballDetection}s`)
-            }
+            console.log(`[API] Scene detection completed in ${flaskTime.toFixed(2)}s`)
+            console.log(`[API] Received ${scenes.length} scenes`)
         } catch (error) {
             console.warn("[API] Flask API call failed, falling back to direct Python execution:", error)
 
-            // Fallback to direct Python execution
             const pythonBin = path.join(projectRoot, ".venv", "bin", "python")
-
-            // Scene detection
-            const pythonScriptPath = path.join(projectRoot, "highlights-clipper.py")
-            const scenesJsonPath = path.join(cacheDir, "scenes.json")
+            const pythonScriptPath = path.join(projectRoot, "backend", "highlights-clipper.py")
 
             try {
                 await execAsync(`${pythonBin} ${pythonScriptPath}`, {
@@ -189,30 +176,12 @@ export async function POST(request: NextRequest) {
             } catch (e) {
                 console.error("[API] Scene detection fallback failed:", e)
             }
-
-            // Ball detection
-            const ballDetectorPath = path.join(projectRoot, "ball-detector.py")
-            const ballDetectionsPath = path.join(cacheDir, "ball_detections.json")
-
-            try {
-                await execAsync(`${pythonBin} ${ballDetectorPath}`, {
-                    cwd: projectRoot,
-                    env: { ...process.env, VIDEO_PATH: videoPath, BALL_DETECTIONS_PATH: ballDetectionsPath, FRAME_SKIP: "5" },
-                })
-                const ballData = await readFile(ballDetectionsPath, "utf-8")
-                ballDetections = JSON.parse(ballData)
-            } catch (e) {
-                console.error("[API] Ball detection fallback failed:", e)
-            }
         }
-
-        console.log("[API] Keeping input.mp4 for debugging")
 
         const totalTime = (performance.now() - requestStart) / 1000
         console.log(`[API] Total API time: ${totalTime.toFixed(2)}s`)
 
-        console.log("[API] Returning response with scenes and ball detections")
-        return NextResponse.json({ scenes, ballDetections })
+        return NextResponse.json({ scenes })
     } catch (error) {
         console.error("[API] ERROR:", error)
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { VideoUpload } from "@/components/video-upload"
 import { VideoEditor } from "@/components/video-editor"
 
@@ -16,8 +16,9 @@ export default function Home() {
   const [videoData, setVideoData] = useState<{
     url: string
     segments: Array<{ start: number; end: number; url: string }>
-    ballDetections?: BallDetection[]
   } | null>(null)
+  const [ballDetections, setBallDetections] = useState<BallDetection[] | undefined>(undefined)
+  const [ballDetectionError, setBallDetectionError] = useState<string | null>(null)
   const [isLoadingCache, setIsLoadingCache] = useState(useCache)
 
   useEffect(() => {
@@ -39,11 +40,10 @@ export default function Home() {
             url: videoUrl,
           }))
 
-          setVideoData({
-            url: videoUrl,
-            segments,
-            ballDetections: data.ballDetections || [],
-          })
+          setVideoData({ url: videoUrl, segments })
+          if (data.ballDetections?.length) {
+            setBallDetections(data.ballDetections)
+          }
         }
       } catch (error) {
         console.error("[CLIENT] Error loading cached video:", error)
@@ -54,6 +54,14 @@ export default function Home() {
 
     loadCachedVideo()
   }, [useCache])
+
+  const handleBallDetectionsLoaded = useCallback(
+    (detections: BallDetection[], error?: string | null) => {
+      setBallDetections(detections)
+      if (error) setBallDetectionError(error)
+    },
+    [],
+  )
 
   if (isLoadingCache) {
     return (
@@ -72,6 +80,8 @@ export default function Home() {
       console.error("[CLIENT] Error clearing cache:", error)
     }
     setVideoData(null)
+    setBallDetections(undefined)
+    setBallDetectionError(null)
   }
 
   return (
@@ -79,7 +89,13 @@ export default function Home() {
       {!videoData ? (
         <VideoUpload onVideoProcessed={setVideoData} />
       ) : (
-        <VideoEditor videoData={videoData} onReset={handleReset} />
+        <VideoEditor
+          videoData={videoData}
+          ballDetections={ballDetections}
+          ballDetectionError={ballDetectionError}
+          onBallDetectionsLoaded={handleBallDetectionsLoaded}
+          onReset={handleReset}
+        />
       )}
     </main>
   )

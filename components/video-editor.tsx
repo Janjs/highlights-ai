@@ -3,11 +3,12 @@
 import type React from "react"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight, Eye, EyeOff } from "lucide-react"
+import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight, Eye, EyeOff, AlertTriangle, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Kbd } from "@/components/ui/kbd"
+import { Progress } from "@/components/ui/progress"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { ThemeSwitcher } from "@/components/theme-switcher"
@@ -23,12 +24,14 @@ interface VideoEditorProps {
   videoData: {
     url: string
     segments: Array<{ start: number; end: number; url: string }>
-    ballDetections?: BallDetection[]
   }
+  ballDetections?: BallDetection[]
+  ballDetectionError?: string | null
+  onBallDetectionsLoaded: (detections: BallDetection[], error?: string | null) => void
   onReset: () => void
 }
 
-export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
+export function VideoEditor({ videoData, ballDetections, ballDetectionError, onBallDetectionsLoaded, onReset }: VideoEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
@@ -50,7 +53,175 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
   const [showBallTracking, setShowBallTracking] = useState(true)
+  const [showBallError, setShowBallError] = useState(!!ballDetectionError)
   const dragStartRef = useRef({ x: 0, scrollLeft: 0 })
+
+  const [isBallDetectionLoading, setIsBallDetectionLoading] = useState(false)
+  const [ballDetectionProgress, setBallDetectionProgress] = useState(0)
+  const ballDetectionStartRef = useRef(0)
+  const ballDetectionAttemptedRef = useRef(false)
+  const ballDetectionTimerRef = useRef<ReturnType<typeof setInterval>>(null)
+  const accumulatedDetectionsRef = useRef<BallDetection[]>([])
+  const lastFlushRef = useRef(0)
+  const isStreamingRef = useRef(false)
+
+  const hasBallDetections = ballDetections && ballDetections.length > 0
+
+  const startEstimatedProgress = useCallback(() => {
+    if (ballDetectionTimerRef.current) clearInterval(ballDetectionTimerRef.current)
+    const estimatedMs = Math.max(10000, (duration || 60) * 800)
+    ballDetectionTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - ballDetectionStartRef.current
+      const base = (elapsed / estimatedMs) * 100
+      const progress = base <= 95
+        ? base
+        : 95 + (1 - Math.exp(-(base - 95) / 20)) * 4.9
+      setBallDetectionProgress(Math.min(99.9, progress))
+    }, 300)
+  }, [duration])
+
+  const startBallDetection = useCallback(async () => {
+    if (hasBallDetections || ballDetectionAttemptedRef.current) return
+    ballDetectionAttemptedRef.current = true
+
+    setIsBallDetectionLoading(true)
+    setBallDetectionProgress(0)
+    ballDetectionStartRef.current = Date.now()
+    accumulatedDetectionsRef.current = []
+    lastFlushRef.current = Date.now()
+    isStreamingRef.current = false
+
+    const abortController = new AbortController()
+    const timeout = setTimeout(() => abortController.abort(), 10 * 60 * 1000)
+
+    try {
+      const response = await fetch("/api/detect-balls", {
+        method: "POST",
+        signal: abortController.signal,
+      })
+
+      if (!response.body) {
+        throw new Error("No response body")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      let lastDataAt = Date.now()
+
+      while (true) {
+        const readResult = await Promise.race([
+          reader.read(),
+          new Promise<{ done: true; value: undefined }>((resolve) =>
+            setTimeout(() => {
+              if (Date.now() - lastDataAt > 5 * 60 * 1000) {
+                reader.cancel()
+                resolve({ done: true, value: undefined })
+              }
+            }, 5 * 60 * 1000)
+          ),
+        ])
+        const { done, value } = readResult
+        if (done) break
+        lastDataAt = Date.now()
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const parsed = JSON.parse(line)
+
+            if (parsed.type === "meta") {
+              if (parsed.fallback) {
+                startEstimatedProgress()
+              } else {
+                isStreamingRef.current = true
+                if (ballDetectionTimerRef.current) {
+                  clearInterval(ballDetectionTimerRef.current)
+                  ballDetectionTimerRef.current = null
+                }
+              }
+            }
+
+            if (parsed.type === "error") {
+              onBallDetectionsLoaded(accumulatedDetectionsRef.current, parsed.message)
+              setShowBallError(true)
+              return
+            }
+
+            if (parsed.type === "detection" && parsed.data) {
+              accumulatedDetectionsRef.current.push(parsed.data)
+              if (isStreamingRef.current && parsed.total > 0) {
+                setBallDetectionProgress((parsed.processed / parsed.total) * 100)
+              }
+
+              const now = Date.now()
+              if (now - lastFlushRef.current > 500) {
+                lastFlushRef.current = now
+                onBallDetectionsLoaded([...accumulatedDetectionsRef.current])
+              }
+            }
+
+            if (parsed.type === "done") {
+              setBallDetectionProgress(100)
+              onBallDetectionsLoaded([...accumulatedDetectionsRef.current])
+            }
+          } catch {
+            // skip malformed lines
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        try {
+          const parsed = JSON.parse(buffer)
+          if (parsed.type === "detection" && parsed.data) {
+            accumulatedDetectionsRef.current.push(parsed.data)
+          }
+          if (parsed.type === "error") {
+            onBallDetectionsLoaded(accumulatedDetectionsRef.current, parsed.message)
+            setShowBallError(true)
+            return
+          }
+        } catch {
+          // skip
+        }
+      }
+
+      onBallDetectionsLoaded([...accumulatedDetectionsRef.current])
+    } catch (error) {
+      console.error("[CLIENT] Ball detection failed:", error)
+      const message = abortController.signal.aborted
+        ? "Ball detection timed out. Try again with a shorter video."
+        : "Ball detection failed. Check the server logs."
+      onBallDetectionsLoaded(accumulatedDetectionsRef.current, message)
+      setShowBallError(true)
+    } finally {
+      clearTimeout(timeout)
+      if (ballDetectionTimerRef.current) {
+        clearInterval(ballDetectionTimerRef.current)
+        ballDetectionTimerRef.current = null
+      }
+      setIsBallDetectionLoading(false)
+      setBallDetectionProgress(0)
+    }
+  }, [hasBallDetections, onBallDetectionsLoaded, startEstimatedProgress])
+
+  useEffect(() => {
+    if (!hasBallDetections && !isBallDetectionLoading && !ballDetectionAttemptedRef.current && duration > 0) {
+      startBallDetection()
+    }
+    return () => {
+      if (ballDetectionTimerRef.current) clearInterval(ballDetectionTimerRef.current)
+    }
+  }, [duration])
+
+  useEffect(() => {
+    if (ballDetectionError) setShowBallError(true)
+  }, [ballDetectionError])
 
   useEffect(() => {
     setSelectedSegments(new Set(videoData.segments.map((_, i) => i)))
@@ -76,7 +247,6 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
         setCurrentSegment(segmentIndex)
       }
 
-      // Skip segment-based playback logic if no segments
       if (videoData.segments.length === 0) return
 
       if (isPlaying && currentSegment >= 0 && currentSegment < videoData.segments.length) {
@@ -267,7 +437,6 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     setIsExporting(true)
     setExportProgress(0)
 
-    // Simulate progress since we can't get real progress from the single-request API yet
     const progressInterval = setInterval(() => {
       setExportProgress((prev) => {
         if (prev >= 95) return prev
@@ -388,100 +557,137 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
     }
   }, [currentTime, duration, zoom, isPlaying])
 
-  // Ball detection drawing effect
-  const drawBallDetections = useCallback(() => {
+  useEffect(() => {
     const video = videoRef.current
     const canvas = canvasRef.current
     const container = videoContainerRef.current
-    if (!video || !canvas || !container || !videoData.ballDetections?.length) return
+    if (!video || !canvas || !container) return
+    if (!ballDetections?.length) return
 
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    // Match canvas size to container
-    const containerRect = container.getBoundingClientRect()
-    if (canvas.width !== containerRect.width || canvas.height !== containerRect.height) {
-      canvas.width = containerRect.width
-      canvas.height = containerRect.height
-    }
+    let rafId: number
 
-    // Clear previous drawings
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    const draw = () => {
+      rafId = requestAnimationFrame(draw)
 
-    if (!showBallTracking) return
+      const dpr = window.devicePixelRatio || 1
+      const rect = container.getBoundingClientRect()
+      const w = Math.round(rect.width)
+      const h = Math.round(rect.height)
 
-    // Find the closest detection to current time
-    const currentVideoTime = video.currentTime
-    let closestDetection = videoData.ballDetections[0]
-    let minDiff = Math.abs(closestDetection.time - currentVideoTime)
+      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+        canvas.width = w * dpr
+        canvas.height = h * dpr
+        canvas.style.width = `${w}px`
+        canvas.style.height = `${h}px`
+        ctx.scale(dpr, dpr)
+      }
 
-    for (const detection of videoData.ballDetections) {
-      const diff = Math.abs(detection.time - currentVideoTime)
-      if (diff < minDiff) {
-        minDiff = diff
-        closestDetection = detection
+      ctx.clearRect(0, 0, w, h)
+
+      if (!showBallTracking) return
+      if (!video.videoWidth || !video.videoHeight) return
+
+      const currentVideoTime = video.currentTime
+      let closestDetection = ballDetections[0]
+      let minDiff = Math.abs(closestDetection.time - currentVideoTime)
+
+      for (const detection of ballDetections) {
+        const diff = Math.abs(detection.time - currentVideoTime)
+        if (diff < minDiff) {
+          minDiff = diff
+          closestDetection = detection
+        }
+      }
+
+      if (minDiff > 0.2 || !closestDetection.boxes.length) return
+
+      const videoAspect = video.videoWidth / video.videoHeight
+      const containerAspect = w / h
+
+      let displayWidth: number, displayHeight: number, offsetX: number, offsetY: number
+
+      if (videoAspect > containerAspect) {
+        displayWidth = w
+        displayHeight = w / videoAspect
+        offsetX = 0
+        offsetY = (h - displayHeight) / 2
+      } else {
+        displayHeight = h
+        displayWidth = h * videoAspect
+        offsetX = (w - displayWidth) / 2
+        offsetY = 0
+      }
+
+      const scaleX = displayWidth / video.videoWidth
+      const scaleY = displayHeight / video.videoHeight
+
+      for (const box of closestDetection.boxes) {
+        const x = offsetX + box.x * scaleX
+        const y = offsetY + box.y * scaleY
+        const bw = box.w * scaleX
+        const bh = box.h * scaleY
+
+        ctx.shadowColor = "#ff6600"
+        ctx.shadowBlur = 12
+
+        ctx.fillStyle = "rgba(255, 102, 0, 0.2)"
+        ctx.fillRect(x, y, bw, bh)
+
+        ctx.strokeStyle = "#ff6600"
+        ctx.lineWidth = 3
+        ctx.strokeRect(x, y, bw, bh)
+
+        ctx.shadowBlur = 0
+
+        const label = `${box.class ?? "Ball"} ${Math.round(box.confidence * 100)}%`
+        ctx.font = "bold 12px sans-serif"
+        const labelW = ctx.measureText(label).width + 10
+        const labelH = 22
+        const labelY = y - labelH - 4
+
+        ctx.fillStyle = "rgba(255, 102, 0, 0.9)"
+        ctx.beginPath()
+        ctx.roundRect(x, labelY, labelW, labelH, 4)
+        ctx.fill()
+
+        ctx.fillStyle = "#fff"
+        ctx.fillText(label, x + 5, labelY + 15)
       }
     }
 
-    // Only draw if we're within 0.2 seconds of a detection
-    if (minDiff > 0.2 || !closestDetection.boxes.length) return
+    rafId = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(rafId)
+  }, [showBallTracking, ballDetections])
 
-    // Calculate scale factors
-    // The video is displayed with object-contain, so we need to calculate the actual video display area
-    const videoAspect = video.videoWidth / video.videoHeight
-    const containerAspect = containerRect.width / containerRect.height
-
-    let displayWidth: number, displayHeight: number, offsetX: number, offsetY: number
-
-    if (videoAspect > containerAspect) {
-      // Video is wider than container
-      displayWidth = containerRect.width
-      displayHeight = containerRect.width / videoAspect
-      offsetX = 0
-      offsetY = (containerRect.height - displayHeight) / 2
-    } else {
-      // Video is taller than container
-      displayHeight = containerRect.height
-      displayWidth = containerRect.height * videoAspect
-      offsetX = (containerRect.width - displayWidth) / 2
-      offsetY = 0
+  const ballDetectionTimeRemaining = (): string => {
+    if (!isBallDetectionLoading || !ballDetectionStartRef.current) return ""
+    if (ballDetectionProgress <= 0) return "Starting..."
+    if (ballDetectionProgress >= 99) return "Almost done..."
+    const elapsed = Date.now() - ballDetectionStartRef.current
+    if (isStreamingRef.current) {
+      const framesProcessed = accumulatedDetectionsRef.current.length
+      if (framesProcessed > 5) {
+        const remaining = Math.max(0, (100 - ballDetectionProgress) / ballDetectionProgress * elapsed)
+        const seconds = Math.ceil(remaining / 1000)
+        if (seconds < 60) return `~${seconds}s remaining (${framesProcessed} frames)`
+        const minutes = Math.floor(seconds / 60)
+        const secs = seconds % 60
+        return `~${minutes}m ${secs}s remaining (${framesProcessed} frames)`
+      }
+      return `${accumulatedDetectionsRef.current.length} frames processed`
     }
-
-    const scaleX = displayWidth / video.videoWidth
-    const scaleY = displayHeight / video.videoHeight
-
-    // Draw bounding boxes
-    ctx.strokeStyle = "#ff6600"
-    ctx.lineWidth = 3
-    ctx.fillStyle = "rgba(255, 102, 0, 0.1)"
-
-    for (const box of closestDetection.boxes) {
-      const x = offsetX + box.x * scaleX
-      const y = offsetY + box.y * scaleY
-      const w = box.w * scaleX
-      const h = box.h * scaleY
-
-      // Draw filled rectangle
-      ctx.fillRect(x, y, w, h)
-
-      // Draw border
-      ctx.strokeRect(x, y, w, h)
-
-      // Draw confidence label
-      ctx.fillStyle = "#ff6600"
-      ctx.font = "bold 12px sans-serif"
-      const label = `${Math.round(box.confidence * 100)}%`
-      const labelWidth = ctx.measureText(label).width + 8
-      ctx.fillRect(x, y - 20, labelWidth, 20)
-      ctx.fillStyle = "white"
-      ctx.fillText(label, x + 4, y - 6)
-      ctx.fillStyle = "rgba(255, 102, 0, 0.1)"
-    }
-  }, [currentTime, showBallTracking, videoData.ballDetections])
-
-  useEffect(() => {
-    drawBallDetections()
-  }, [drawBallDetections])
+    const estimatedMs = Math.max(10000, (duration || 60) * 800)
+    const remaining = Math.max(0, estimatedMs - elapsed)
+    const seconds = Math.ceil(remaining / 1000)
+    if (seconds <= 0) return "Almost done..."
+    if (seconds < 60) return `~${seconds}s remaining`
+    const minutes = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `~${minutes}m ${secs}s remaining`
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -521,7 +727,12 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                 )}
               </div>
             </Button>
-            {videoData.ballDetections && videoData.ballDetections.length > 0 && (
+            {isBallDetectionLoading ? (
+              <Button variant="outline" size="sm" disabled className="gap-1.5">
+                <Spinner className="h-3.5 w-3.5" />
+                Ball
+              </Button>
+            ) : hasBallDetections ? (
               <Button
                 variant={showBallTracking ? "default" : "outline"}
                 size="sm"
@@ -531,10 +742,35 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                 {showBallTracking ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                 Ball
               </Button>
-            )}
+            ) : null}
             <ThemeSwitcher />
           </div>
         </div>
+
+        {isBallDetectionLoading && (
+          <div className="flex items-center gap-3 rounded-lg border border-orange-500/30 bg-orange-500/5 px-4 py-2.5">
+            <Spinner className="h-4 w-4 shrink-0 text-orange-500" />
+            <div className="flex flex-1 items-center gap-3">
+              <p className="text-sm text-foreground">
+                Analyzing ball tracking{accumulatedDetectionsRef.current.length > 0 ? ` (${accumulatedDetectionsRef.current.length} frames)` : ""}...
+              </p>
+              <p className="text-xs text-muted-foreground">{ballDetectionTimeRemaining()}</p>
+            </div>
+            <div className="w-32">
+              <Progress value={ballDetectionProgress} className="h-1.5 bg-orange-500/20 [&>[data-slot=progress-indicator]]:bg-orange-500" />
+            </div>
+          </div>
+        )}
+
+        {showBallError && ballDetectionError && !isBallDetectionLoading && (
+          <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
+            <p className="flex-1 text-sm text-destructive">{ballDetectionError}</p>
+            <Button variant="ghost" size="icon-sm" onClick={() => setShowBallError(false)}>
+              <X className="h-3.5 w-3.5 text-destructive" />
+            </Button>
+          </div>
+        )}
 
         <div ref={videoContainerRef} className="rounded-xl overflow-hidden bg-black relative aspect-video">
           <video
@@ -558,17 +794,13 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
             onCanPlay={() => console.log("[VIDEO] Can play")}
           />
 
-          {/* Ball Detection Overlay Canvas */}
           <canvas
             ref={canvasRef}
-            className="absolute inset-0 pointer-events-none"
-            style={{ width: "100%", height: "100%" }}
+            className="absolute inset-0 z-[5] pointer-events-none"
           />
 
-          {/* Video Controls Overlay */}
           <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black via-black/80 to-transparent p-4">
             <div className="space-y-3">
-              {/* Progress Bar */}
               <div
                 className="relative w-full h-6 flex items-center cursor-pointer"
                 onMouseDown={(e) => {
@@ -628,7 +860,6 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                 <span>{formatTime(duration)}</span>
               </div>
 
-              {/* Playback Controls */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
@@ -703,6 +934,12 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
           </div>
 
           <div className="relative w-full h-[160px] overflow-visible">
+            {isBallDetectionLoading && duration > 0 && (
+              <div
+                className="absolute top-0 right-0 h-full z-[5] pointer-events-none transition-all duration-500 ease-linear bg-background/50"
+                style={{ width: `${100 - ballDetectionProgress}%` }}
+              />
+            )}
             {duration > 0 && (
               <div
                 className="pointer-events-none absolute z-30 -translate-x-1/2"
@@ -835,17 +1072,15 @@ export function VideoEditor({ videoData, onReset }: VideoEditorProps) {
                     </div>
                   )
                 })}
-                {/* Playhead */}
                 <div
                   className="pointer-events-none absolute top-0 h-full w-0.5 -translate-x-1/2 z-20 bg-secondary-foreground"
                   style={{ left: `${(currentTime / duration) * 100}%` }}
                 />
-                {/* Made Basket Markers - Only show for Made-basket class */}
-                {showBallTracking && videoData.ballDetections && duration > 0 && videoData.ballDetections
-                  .filter(detection => detection.boxes.some(box => box.class === "Made-basket"))
+                {showBallTracking && ballDetections && duration > 0 && ballDetections
+                  .filter(detection => detection.boxes.some(box => box.class === "Made-Basket"))
                   .flatMap((detection, dIndex) =>
                     detection.boxes
-                      .filter(box => box.class === "Made-basket")
+                      .filter(box => box.class === "Made-Basket")
                       .map((box, bIndex) => (
                         <div
                           key={`basket-${dIndex}-${bIndex}`}

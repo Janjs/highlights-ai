@@ -1,0 +1,8 @@
+# Scene detection
+scenedetect[opencv]>=0.6
+
+# Ball/basket detection with Roboflow
+inference
+
+# Flask API
+flask
