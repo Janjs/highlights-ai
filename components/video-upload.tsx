@@ -265,13 +265,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
       <Card className="w-full max-w-2xl p-8">
         <div className="mb-8 text-center">
-          <div className="mb-4 flex justify-center">
-            <div className="rounded-full bg-primary/10 p-4">
-              <Icons.film className="h-12 w-12 text-primary" />
-            </div>
-          </div>
-          <h1 className="mb-2 flex items-center justify-center gap-2 text-3xl font-bold text-foreground">
-            <Icons.appIcon className="h-8 w-8 shrink-0" />
+          <h1 className="mb-2 text-3xl font-bold text-foreground">
             Highlight AI
           </h1>
           <p className="text-muted-foreground">Upload your video to automatically detect and split scenes</p>

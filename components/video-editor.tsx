@@ -42,15 +42,19 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   const [currentSegment, setCurrentSegment] = useState(0)
   const [volume, setVolume] = useState(1)
   const [isMuted, setIsMuted] = useState(false)
-  const [zoom, setZoom] = useState(3)
+  const [zoom, setZoom] = useState(1)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
   const [timelineScroll, setTimelineScroll] = useState({ scrollLeft: 0, scrollWidth: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const [isScrubbing, setIsScrubbing] = useState(false)
+  type SegmentEntry = { start: number; end: number; url: string }
+  const [segments, setSegments] = useState(videoData.segments)
   const [selectedSegments, setSelectedSegments] = useState<Set<number>>(
     () => new Set(videoData.segments.map((_, i) => i)),
   )
+  const undoStackRef = useRef<{ segments: SegmentEntry[]; selectedSegments: number[] }[]>([])
+  const redoStackRef = useRef<{ segments: SegmentEntry[]; selectedSegments: number[] }[]>([])
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
   const [showBallTracking, setShowBallTracking] = useState(true)
@@ -65,6 +69,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   const accumulatedDetectionsRef = useRef<BallDetection[]>([])
   const lastFlushRef = useRef(0)
   const isStreamingRef = useRef(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const hasBallDetections = ballDetections && ballDetections.length > 0
 
@@ -99,6 +104,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     isStreamingRef.current = false
 
     const abortController = new AbortController()
+    abortControllerRef.current = abortController
     const timeout = setTimeout(() => abortController.abort(), 10 * 60 * 1000)
 
     const applyBasketSelection = (detections: BallDetection[]) => {
@@ -106,7 +112,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
         .filter((d) => d.boxes.some((b) => b.class === "Made-Basket"))
         .map((d) => d.time)
       const segmentsWithBaskets = new Set<number>()
-      videoData.segments.forEach((seg, i) => {
+      segments.forEach((seg, i) => {
         if (basketTimes.some((t) => t >= seg.start && t < seg.end)) {
           segmentsWithBaskets.add(i)
         }
@@ -224,12 +230,14 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       applyBasketSelection(finalDetections)
     } catch (error) {
       console.error("[CLIENT] Ball detection failed:", error)
-      const message = abortController.signal.aborted
-        ? "Ball detection timed out. Try again with a shorter video."
-        : "Ball detection failed. Check the server logs."
-      onBallDetectionsLoaded(accumulatedDetectionsRef.current, message)
-      setShowBallError(true)
+      if (abortController.signal.aborted) {
+        onBallDetectionsLoaded([...accumulatedDetectionsRef.current])
+      } else {
+        onBallDetectionsLoaded(accumulatedDetectionsRef.current, "Ball detection failed. Check the server logs.")
+        setShowBallError(true)
+      }
     } finally {
+      abortControllerRef.current = null
       clearTimeout(timeout)
       if (ballDetectionTimerRef.current) {
         clearInterval(ballDetectionTimerRef.current)
@@ -248,6 +256,10 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     startBallDetection(true)
   }, [isBallDetectionLoading, onBallDetectionsLoaded, startBallDetection])
 
+  const stopBallDetection = useCallback(() => {
+    abortControllerRef.current?.abort()
+  }, [])
+
   useEffect(() => {
     if (aiHighlighting && !hasBallDetections && !isBallDetectionLoading && !ballDetectionAttemptedRef.current && duration > 0) {
       startBallDetection()
@@ -262,14 +274,11 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   }, [ballDetectionError])
 
   useEffect(() => {
+    setSegments(videoData.segments)
     setSelectedSegments(new Set(videoData.segments.map((_, i) => i)))
+    undoStackRef.current = []
+    redoStackRef.current = []
   }, [videoData.url])
-
-  useEffect(() => {
-    if (duration > 0) {
-      setZoom(duration < 180 ? 1 : 3)
-    }
-  }, [duration])
 
   useEffect(() => {
     const video = videoRef.current
@@ -278,21 +287,21 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     const handleTimeUpdate = () => {
       setCurrentTime(video.currentTime)
 
-      const segmentIndex = videoData.segments.findIndex(
+      const segmentIndex = segments.findIndex(
         (seg) => video.currentTime >= seg.start && video.currentTime < seg.end,
       )
       if (segmentIndex !== -1 && segmentIndex !== currentSegment) {
         setCurrentSegment(segmentIndex)
       }
 
-      if (videoData.segments.length === 0) return
+      if (segments.length === 0) return
 
-      if (isPlaying && currentSegment >= 0 && currentSegment < videoData.segments.length) {
-        const seg = videoData.segments[currentSegment]
+      if (isPlaying && currentSegment >= 0 && currentSegment < segments.length) {
+        const seg = segments[currentSegment]
         if (video.currentTime >= seg.end - 0.02) {
           const next = [...selectedSegments].filter((i) => i > currentSegment).sort((a, b) => a - b)[0] ?? null
           if (next != null) {
-            video.currentTime = videoData.segments[next].start + 0.01
+            video.currentTime = segments[next].start + 0.01
             setCurrentSegment(next)
           } else {
             video.pause()
@@ -306,7 +315,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
           ?? [...selectedSegments].sort((a, b) => a - b)[0]
           ?? null
         if (next != null) {
-          video.currentTime = videoData.segments[next].start + 0.01
+          video.currentTime = segments[next].start + 0.01
           setCurrentSegment(next)
         } else {
           video.pause()
@@ -332,7 +341,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       video.removeEventListener("loadedmetadata", handleLoadedMetadata)
       video.removeEventListener("ended", handleEnded)
     }
-  }, [videoData.segments, currentSegment, isPlaying, selectedSegments])
+  }, [segments, currentSegment, isPlaying, selectedSegments])
 
   const togglePlay = () => {
     const video = videoRef.current
@@ -344,7 +353,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       if (!selectedSegments.has(currentSegment)) {
         const next = getNextSelected(currentSegment) ?? [...selectedSegments].sort((a, b) => a - b)[0] ?? null
         if (next != null) {
-          video.currentTime = videoData.segments[next].start + 0.01
+          video.currentTime = segments[next].start + 0.01
           setCurrentSegment(next)
         }
       }
@@ -371,7 +380,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     if (!video) return
     const next = getNextSelected(currentSegment)
     if (next === null) return
-    video.currentTime = videoData.segments[next].start + 0.01
+    video.currentTime = segments[next].start + 0.01
     setCurrentSegment(next)
     if (!isPlaying) {
       video.play()
@@ -384,11 +393,11 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     if (!video) return
     const prev = getPrevSelected(currentSegment)
     if (prev === null) {
-      const seg = videoData.segments[currentSegment]
+      const seg = segments[currentSegment]
       if (seg) video.currentTime = seg.start + 0.01
       return
     }
-    video.currentTime = videoData.segments[prev].start + 0.01
+    video.currentTime = segments[prev].start + 0.01
     setCurrentSegment(prev)
     if (!isPlaying) {
       video.play()
@@ -426,11 +435,101 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     const video = videoRef.current
     if (!video) return
 
-    const segment = videoData.segments[index]
+    const segment = segments[index]
     const seekTime = Math.min(segment.start + 0.15, segment.end - 0.01)
     video.currentTime = Math.max(segment.start, seekTime)
     setCurrentSegment(index)
   }
+
+  const minSplitMargin = 0.05
+  const splitSegmentIndex = segments.findIndex(
+    (seg) => currentTime > seg.start + minSplitMargin && currentTime < seg.end - minSplitMargin
+  )
+  const canSplit = splitSegmentIndex !== -1
+
+  const maxUndo = 50
+  const segmentsRef = useRef(segments)
+  const selectedSegmentsRef = useRef(selectedSegments)
+  segmentsRef.current = segments
+  selectedSegmentsRef.current = selectedSegments
+
+  const splitAtPlayhead = () => {
+    if (!canSplit) return
+    const seg = segments[splitSegmentIndex]
+    const prevSegments = segmentsRef.current
+    const prevSelected = selectedSegmentsRef.current
+    if (undoStackRef.current.length >= maxUndo) undoStackRef.current.shift()
+    undoStackRef.current.push({
+      segments: prevSegments,
+      selectedSegments: [...prevSelected],
+    })
+    redoStackRef.current = []
+    setSegments((prev) => [
+      ...prev.slice(0, splitSegmentIndex),
+      { ...seg, start: seg.start, end: currentTime, url: seg.url },
+      { ...seg, start: currentTime, end: seg.end, url: seg.url },
+      ...prev.slice(splitSegmentIndex + 1),
+    ])
+    setSelectedSegments((prev) => {
+      const next = new Set<number>()
+      prev.forEach((idx) => {
+        if (idx < splitSegmentIndex) next.add(idx)
+        else if (idx === splitSegmentIndex) {
+          next.add(splitSegmentIndex)
+          next.add(splitSegmentIndex + 1)
+        } else next.add(idx + 1)
+      })
+      return next
+    })
+  }
+
+  const undo = useCallback(() => {
+    const stack = undoStackRef.current
+    if (stack.length === 0) return
+    const current = { segments: segmentsRef.current, selectedSegments: [...selectedSegmentsRef.current] }
+    redoStackRef.current.push(current)
+    const prev = stack.pop()!
+    setSegments(prev.segments)
+    setSelectedSegments(new Set(prev.selectedSegments))
+    setCurrentSegment((s) => Math.min(s, prev.segments.length - 1))
+  }, [])
+
+  const redo = useCallback(() => {
+    const stack = redoStackRef.current
+    if (stack.length === 0) return
+    const current = { segments: segmentsRef.current, selectedSegments: [...selectedSegmentsRef.current] }
+    undoStackRef.current.push(current)
+    const next = stack.pop()!
+    setSegments(next.segments)
+    setSelectedSegments(new Set(next.selectedSegments))
+    setCurrentSegment((s) => Math.min(s, next.segments.length - 1))
+  }, [])
+
+  const splitAtPlayheadRef = useRef(splitAtPlayhead)
+  splitAtPlayheadRef.current = splitAtPlayhead
+  const undoRef = useRef(undo)
+  const redoRef = useRef(redo)
+  undoRef.current = undo
+  redoRef.current = redo
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return
+      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault()
+        if (e.shiftKey) redoRef.current()
+        else undoRef.current()
+        return
+      }
+      if (e.key === "s" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (splitAtPlayheadRef.current) {
+          e.preventDefault()
+          splitAtPlayheadRef.current()
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
 
   const updateScrollButtons = () => {
     const container = timelineScrollRef.current
@@ -487,7 +586,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     }, 500)
 
     try {
-      const segmentsToExport = videoData.segments
+      const segmentsToExport = segments
         .filter((_, index) => selectedSegments.has(index))
         .map((seg) => ({ start: seg.start, end: seg.end }))
 
@@ -770,19 +869,18 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-6 md:px-10 lg:px-12 py-6 md:py-6 flex flex-col gap-6">
         <div className="flex items-center justify-between shrink-0">
-          <h1 className="flex items-center gap-2 text-lg font-bold text-foreground">
-            <Icons.appIcon className="h-5 w-5 shrink-0" />
+          <h1 className="text-lg font-bold text-foreground">
             Highlight AI
           </h1>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
-              size="sm"
+              size="icon-sm"
               onClick={rerunBallDetection}
               disabled={isBallDetectionLoading}
+              title={hasBallDetections ? "Rerun Detection" : "Run Detection"}
             >
-              <Icons.rotateCcw className="h-4 w-4" />
-              Rerun Detection
+              <Icons.aiSpark className="h-4 w-4" />
             </Button>
             <Button variant="outline" size="sm" onClick={onReset}>
               <Icons.rotateCcw className="h-4 w-4" />
@@ -822,13 +920,16 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
             <Spinner className="h-4 w-4 shrink-0 text-orange-500" />
             <div className="flex flex-1 items-center gap-3">
               <p className="text-sm text-foreground">
-                Analyzing ball tracking...
+                Analyzing match...
               </p>
               <p className="text-xs text-muted-foreground">{ballDetectionTimeRemaining()}</p>
             </div>
             <div className="w-32">
               <Progress value={ballDetectionProgress} className="h-1.5 bg-orange-500/20 [&>[data-slot=progress-indicator]]:bg-orange-500" />
             </div>
+            <Button variant="ghost" size="icon-sm" onClick={stopBallDetection}>
+              <Icons.x className="h-3.5 w-3.5 text-orange-500" />
+            </Button>
           </div>
         )}
 
@@ -918,7 +1019,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
           <div className="px-4 py-3 flex items-center justify-between border-b">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground min-w-[3rem] tabular-nums">
-                Clip {currentSegment + 1} of {Math.max(1, videoData.segments.length)}
+                Clip {currentSegment + 1} of {Math.max(1, segments.length)}
               </span>
               <Badge variant="outline" className="gap-1">
                 <Kbd className="h-4 min-w-4 text-[10px]">⌘</Kbd>
@@ -927,6 +1028,16 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
               </Badge>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={splitAtPlayhead}
+                disabled={!canSplit}
+                title="Split clip at playhead (S)"
+              >
+                <Icons.scissors className="h-4 w-4" />
+                Split
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -1009,7 +1120,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
                 className="relative h-full min-w-full bg-muted"
                 style={{ width: `${zoom * 100}%`, minHeight: "100%" }}
               >
-                {videoData.segments.map((segment, index) => {
+                {segments.map((segment, index) => {
                   const selected = selectedSegments.has(index)
                   return (
                     <div
@@ -1032,7 +1143,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
                             setSelectedSegments((prev) => {
                               const next = new Set(prev)
                               if (next.has(index)) {
-                                if (prev.size === videoData.segments.length) return new Set([index])
+                                if (prev.size === segments.length) return new Set([index])
                                 next.delete(index)
                               } else {
                                 next.add(index)
@@ -1069,7 +1180,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
                               if (checked === true) {
                                 next.add(index)
                               } else {
-                                if (prev.size === videoData.segments.length) return new Set([index])
+                                if (prev.size === segments.length) return new Set([index])
                                 next.delete(index)
                               }
                               return next
