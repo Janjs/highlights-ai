@@ -16,7 +16,7 @@ RUN corepack enable pnpm
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-ARG NEXT_PUBLIC_CACHE=1
+ARG NEXT_PUBLIC_CACHE=0
 ENV NEXT_PUBLIC_CACHE=${NEXT_PUBLIC_CACHE}
 ENV NEXT_TELEMETRY_DISABLED=1
 

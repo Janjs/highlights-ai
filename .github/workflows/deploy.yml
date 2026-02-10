@@ -42,8 +42,6 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             ROBOFLOW_API_KEY=${{ secrets.ROBOFLOW_API_KEY }}
-            NEXT_PUBLIC_CACHE=${{ vars.NEXT_PUBLIC_CACHE }}
-            SKIP_DETECTION=${{ vars.SKIP_DETECTION }}
 
       - name: Deploy to Coolify
         run: |
