@@ -7,6 +7,7 @@
     "dev": "next dev -H localhost",
     "dev:all": "concurrently \"npm run flask\" \"npm run dev\"",
     "flask": ".venv/bin/python backend/video_processor.py",
+    "flask:prod": ".venv/bin/gunicorn --bind 0.0.0.0:5001 --timeout 600 --workers 2 --chdir backend wsgi:app",
     "lint": "eslint .",
     "start": "next start",
     "generate-favicon": "node scripts/generate-favicon.mjs"

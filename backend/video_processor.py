@@ -1,336 +1,320 @@
-# Flask API for Video Processing
-# Provides scene detection and ball detection endpoints with logging
-
 import os
 import json
 import time
 import logging
+import subprocess
+import shutil
 from logging.handlers import RotatingFileHandler
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, request, jsonify, Response, stream_with_context, send_file
+from flask_cors import CORS
 import cv2
 
-# Configure logging
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.cache')
+os.makedirs(CACHE_DIR, exist_ok=True)
+os.makedirs(os.path.join(CACHE_DIR, 'exports'), exist_ok=True)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('video-processor')
 logger.setLevel(logging.DEBUG)
 
-# Console handler with formatting
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
-console_format = logging.Formatter(
+console_handler.setFormatter(logging.Formatter(
     '%(asctime)s | %(levelname)-8s | %(message)s',
     datefmt='%H:%M:%S'
-)
-console_handler.setFormatter(console_format)
+))
 logger.addHandler(console_handler)
 
-# File handler for persistent logs
-os.makedirs('.cache', exist_ok=True)
 file_handler = RotatingFileHandler(
-    '.cache/video-processor.log',
-    maxBytes=5*1024*1024,  # 5MB
+    os.path.join(CACHE_DIR, 'video-processor.log'),
+    maxBytes=5 * 1024 * 1024,
     backupCount=3
 )
 file_handler.setLevel(logging.DEBUG)
-file_format = logging.Formatter(
+file_handler.setFormatter(logging.Formatter(
     '%(asctime)s | %(levelname)-8s | %(funcName)s | %(message)s'
-)
-file_handler.setFormatter(file_format)
+))
 logger.addHandler(file_handler)
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024 * 1024
+CORS(app)
 
-# ============================================================
-# Scene Detection
-# ============================================================
 
 def detect_scenes(video_path: str, threshold: float = 70.0, min_scene_len: int = 15) -> list:
-    """Detect scenes in a video using PySceneDetect"""
     from scenedetect import VideoManager, SceneManager
     from scenedetect.detectors import ContentDetector
-    
-    logger.info(f"🎬 Starting scene detection for: {video_path}")
-    logger.debug(f"   Threshold: {threshold}, Min scene length: {min_scene_len}")
-    
+
+    logger.info(f"Starting scene detection for: {video_path}")
     start_time = time.time()
-    
+
     video_manager = VideoManager([video_path])
     scene_manager = SceneManager()
     scene_manager.add_detector(ContentDetector(threshold=threshold, min_scene_len=min_scene_len))
-    
-    logger.debug("   Setting downscale factor to 4...")
     video_manager.set_downscale_factor(4)
-    
-    logger.info("   Processing video frames...")
     video_manager.start()
     scene_manager.detect_scenes(frame_source=video_manager)
-    
+
     scene_list = scene_manager.get_scene_list()
-    detection_time = time.time() - start_time
-    
-    logger.info(f"✅ Detected {len(scene_list)} scenes in {detection_time:.2f}s")
-    
+    logger.info(f"Detected {len(scene_list)} scenes in {time.time() - start_time:.2f}s")
+
     scenes = []
     for i, (start, end) in enumerate(scene_list):
-        start_time_sec = start.get_seconds()
-        end_time_sec = end.get_seconds()
-        scenes.append({
-            "start": start_time_sec,
-            "end": end_time_sec,
-        })
-        logger.debug(f"   Scene {i+1}: {start_time_sec:.2f}s - {end_time_sec:.2f}s")
-    
+        start_sec = start.get_seconds()
+        end_sec = end.get_seconds()
+        scenes.append({"start": start_sec, "end": end_sec})
+        logger.debug(f"  Scene {i + 1}: {start_sec:.2f}s - {end_sec:.2f}s")
+
     return scenes
 
-# ============================================================
-# Ball Detection with Roboflow
-# ============================================================
+
+def _extract_predictions(results):
+    predictions = []
+    if isinstance(results, list) and len(results) > 0:
+        result = results[0]
+        if isinstance(result, dict):
+            predictions = result.get("predictions", [])
+        elif hasattr(result, 'predictions'):
+            predictions = result.predictions
+    elif isinstance(results, dict):
+        predictions = results.get("predictions", [])
+    return predictions
+
+
+def _extract_box(pred, confidence_threshold=0.3):
+    if isinstance(pred, dict):
+        conf = pred.get("confidence", 0)
+        cx, cy = pred.get("x", 0), pred.get("y", 0)
+        w, h = pred.get("width", 0), pred.get("height", 0)
+        cls = pred.get("class", "Basketball")
+    else:
+        conf = getattr(pred, 'confidence', 0)
+        cx, cy = getattr(pred, 'x', 0), getattr(pred, 'y', 0)
+        w, h = getattr(pred, 'width', 0), getattr(pred, 'height', 0)
+        cls = getattr(pred, 'class', 'Basketball')
+
+    if conf >= confidence_threshold:
+        return {
+            "x": round(cx - w / 2), "y": round(cy - h / 2),
+            "w": round(w), "h": round(h),
+            "confidence": round(conf, 3), "class": cls
+        }
+    return None
+
 
 def detect_balls(video_path: str, frame_skip: int = 5, confidence_threshold: float = 0.3) -> list:
-    """Detect basketballs in video using Roboflow get_model()"""
     from inference import get_model
-    
+
     API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
     MODEL_ID = "made-baskets-gswke/1"
-    
+
     if not API_KEY:
-        logger.error("ROBOFLOW_API_KEY environment variable is not set")
-        raise ValueError("ROBOFLOW_API_KEY is required. Get one at https://docs.roboflow.com/api-reference/authentication#retrieve-an-api-key")
-    
+        raise ValueError("ROBOFLOW_API_KEY is required")
+
     os.environ["ROBOFLOW_API_KEY"] = API_KEY
-    
-    logger.info(f"🏀 Starting ball detection for: {video_path}")
-    logger.debug(f"   Model: {MODEL_ID}")
-    logger.debug(f"   Frame skip: {frame_skip}, Confidence threshold: {confidence_threshold}")
-    
-    # Load model
-    model_start = time.time()
-    logger.info("   Loading Roboflow model...")
+
+    logger.info(f"Starting ball detection for: {video_path}")
     model = get_model(model_id=MODEL_ID)
-    model_time = time.time() - model_start
-    logger.info(f"   Model loaded in {model_time:.2f}s")
-    
-    # Get video info
+
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / fps if fps > 0 else 0
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
-    logger.info(f"   Video: {total_frames} frames, {fps:.1f} fps, {duration:.1f}s, {frame_width}x{frame_height}")
-    
-    # Process frames
+
     detections = []
     frame_count = 0
     processed_count = 0
     start_time = time.time()
-    
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        
+
         if frame_count % frame_skip == 0:
             timestamp = frame_count / fps if fps > 0 else 0
             frame_detections = []
-            
+
             try:
-                # Run inference - returns list of results
                 results = model.infer(frame)
-                
-                # Handle different response formats
-                predictions = []
-                if isinstance(results, list) and len(results) > 0:
-                    result = results[0]
-                    if isinstance(result, dict):
-                        predictions = result.get("predictions", [])
-                    elif hasattr(result, 'predictions'):
-                        predictions = result.predictions
-                elif isinstance(results, dict):
-                    predictions = results.get("predictions", [])
-                
-                for pred in predictions:
-                    # Handle both dict and object formats
-                    if isinstance(pred, dict):
-                        conf = pred.get("confidence", 0)
-                        cx = pred.get("x", 0)
-                        cy = pred.get("y", 0)
-                        w = pred.get("width", 0)
-                        h = pred.get("height", 0)
-                        cls = pred.get("class", "Basketball")
-                    else:
-                        conf = getattr(pred, 'confidence', 0)
-                        cx = getattr(pred, 'x', 0)
-                        cy = getattr(pred, 'y', 0)
-                        w = getattr(pred, 'width', 0)
-                        h = getattr(pred, 'height', 0)
-                        cls = getattr(pred, 'class', 'Basketball')
-                    
-                    if conf >= confidence_threshold:
-                        frame_detections.append({
-                            "x": round(cx - w/2),
-                            "y": round(cy - h/2),
-                            "w": round(w),
-                            "h": round(h),
-                            "confidence": round(conf, 3),
-                            "class": cls
-                        })
-                        logger.debug(f"   Frame {frame_count} ({timestamp:.2f}s): {cls} at ({cx:.0f}, {cy:.0f}) conf={conf:.2f}")
-            
+                for pred in _extract_predictions(results):
+                    box = _extract_box(pred, confidence_threshold)
+                    if box:
+                        frame_detections.append(box)
             except Exception as e:
-                logger.warning(f"   Error processing frame {frame_count}: {e}")
-            
+                logger.warning(f"Error processing frame {frame_count}: {e}")
+
             detections.append({
                 "time": round(timestamp, 3),
                 "frame": frame_count,
                 "boxes": frame_detections
             })
-            
             processed_count += 1
-            
+
             if processed_count % 100 == 0:
                 progress = (frame_count / total_frames) * 100 if total_frames > 0 else 0
-                balls_found = sum(len(d["boxes"]) for d in detections)
-                elapsed = time.time() - start_time
-                logger.info(f"   Progress: {progress:.1f}% ({processed_count} frames, {balls_found} balls, {elapsed:.1f}s)")
-        
+                logger.info(f"  Progress: {progress:.1f}% ({processed_count} frames)")
+
         frame_count += 1
-    
+
     cap.release()
-    
-    detection_time = time.time() - start_time
-    frames_with_balls = sum(1 for d in detections if len(d["boxes"]) > 0)
-    total_balls = sum(len(d["boxes"]) for d in detections)
-    
-    logger.info(f"✅ Ball detection complete in {detection_time:.2f}s")
-    logger.info(f"   Processed {processed_count} frames, found {total_balls} balls in {frames_with_balls} frames")
-    
+    logger.info(f"Ball detection complete in {time.time() - start_time:.2f}s ({processed_count} frames)")
     return detections
 
+
 # ============================================================
-# Flask Routes
+# Routes
 # ============================================================
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
-    logger.debug("Health check requested")
     return jsonify({"status": "ok", "service": "video-processor"})
 
-@app.route('/process', methods=['POST'])
-def process_video():
-    """Process a video: detect scenes and balls"""
-    data = request.get_json()
-    video_path = data.get('video_path')
-    
-    if not video_path:
-        logger.error("No video_path provided")
-        return jsonify({"error": "video_path is required"}), 400
-    
-    if not os.path.exists(video_path):
-        logger.error(f"Video not found: {video_path}")
-        return jsonify({"error": f"Video not found: {video_path}"}), 404
-    
-    logger.info("=" * 60)
-    logger.info(f"📹 Processing video: {video_path}")
-    logger.info("=" * 60)
-    
-    total_start = time.time()
-    
+
+@app.route('/upload', methods=['POST'])
+def upload_video():
+    if 'video' not in request.files:
+        return jsonify({"error": "No video file provided"}), 400
+
+    video = request.files['video']
+    if not video.filename:
+        return jsonify({"error": "No selected file"}), 400
+
+    logger.info(f"Received video upload: {video.filename}")
+
+    original_path = os.path.join(CACHE_DIR, 'input_original.mp4')
+    compressed_path = os.path.join(CACHE_DIR, 'input.mp4')
+    scenes_path = os.path.join(CACHE_DIR, 'scenes.json')
+
+    save_start = time.time()
+    video.save(original_path)
+    original_size = os.path.getsize(original_path)
+    logger.info(f"Video saved ({original_size / 1024 / 1024:.2f} MB) in {time.time() - save_start:.2f}s")
+
+    compress_start = time.time()
     try:
-        # Scene detection
-        scene_start = time.time()
-        scenes = detect_scenes(video_path)
-        scene_time = time.time() - scene_start
-        
-        # Ball detection (skip if SKIP_DETECTION is set)
-        ball_detections = []
-        ball_time = 0
-        skip_balls = os.getenv('SKIP_DETECTION', 'false').lower() in ('true', '1', 'yes')
-        
-        if skip_balls:
-            logger.info("⏭️ Skipping ball detection (SKIP_DETECTION=true)")
-        else:
-            ball_start = time.time()
-            frame_skip = data.get('frame_skip', 5)
-            ball_detections = detect_balls(video_path, frame_skip=frame_skip)
-            ball_time = time.time() - ball_start
-        
-        total_time = time.time() - total_start
-        
-        logger.info("=" * 60)
-        logger.info(f"🎉 Processing complete in {total_time:.2f}s")
-        logger.info(f"   Scene detection: {scene_time:.2f}s")
-        if not skip_balls:
-            logger.info(f"   Ball detection: {ball_time:.2f}s")
-        logger.info("=" * 60)
-        
-        return jsonify({
-            "scenes": scenes,
-            "ballDetections": ball_detections,
-            "timing": {
-                "total": round(total_time, 2),
-                "sceneDetection": round(scene_time, 2),
-                "ballDetection": round(ball_time, 2)
-            }
-        })
-        
+        subprocess.run([
+            'ffmpeg', '-i', original_path,
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart',
+            compressed_path, '-y'
+        ], capture_output=True, check=True, timeout=600)
+        compressed_size = os.path.getsize(compressed_path)
+        reduction = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+        logger.info(f"Compressed in {time.time() - compress_start:.2f}s "
+                     f"({original_size / 1024 / 1024:.1f}MB -> {compressed_size / 1024 / 1024:.1f}MB, "
+                     f"{reduction:.1f}% reduction)")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.warning(f"Compression failed, using original: {e}")
+        shutil.copy2(original_path, compressed_path)
+
+    try:
+        scenes = detect_scenes(compressed_path)
+        with open(scenes_path, 'w') as f:
+            json.dump(scenes, f)
+        return jsonify({"scenes": scenes})
     except Exception as e:
-        logger.exception(f"Error processing video: {e}")
+        logger.exception(f"Scene detection failed: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/video', methods=['GET'])
+def serve_video():
+    video_path = os.path.join(CACHE_DIR, 'input.mp4')
+    if not os.path.exists(video_path):
+        return jsonify({"error": "Video not found"}), 404
+
+    file_size = os.path.getsize(video_path)
+    range_header = request.headers.get('Range')
+
+    if range_header:
+        ranges = range_header.replace('bytes=', '').split('-')
+        start = int(ranges[0])
+        end = int(ranges[1]) if ranges[1] else file_size - 1
+        start = max(0, min(start, file_size - 1))
+        end = max(start, min(end, file_size - 1))
+        chunk_size = end - start + 1
+
+        def generate():
+            with open(video_path, 'rb') as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    data = f.read(min(65536, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return Response(generate(), status=206, headers={
+            'Content-Range': f'bytes {start}-{end}/{file_size}',
+            'Accept-Ranges': 'bytes',
+            'Content-Length': str(chunk_size),
+            'Content-Type': 'video/mp4',
+        })
+
+    return send_file(video_path, mimetype='video/mp4')
+
 
 @app.route('/scenes', methods=['POST'])
 def scenes_only():
-    """Detect only scenes"""
     data = request.get_json()
     video_path = data.get('video_path')
-    
+
     if not video_path or not os.path.exists(video_path):
         return jsonify({"error": "Invalid video_path"}), 400
-    
-    logger.info(f"Scene detection requested for: {video_path}")
-    
+
     try:
         scenes = detect_scenes(video_path)
         return jsonify({"scenes": scenes})
     except Exception as e:
-        logger.exception(f"Error in scene detection: {e}")
+        logger.exception(f"Scene detection error: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/balls', methods=['POST'])
 def balls_only():
-    """Detect only balls"""
     data = request.get_json()
     video_path = data.get('video_path')
     frame_skip = data.get('frame_skip', 5)
-    
+
     if not video_path or not os.path.exists(video_path):
         return jsonify({"error": "Invalid video_path"}), 400
-    
-    logger.info(f"Ball detection requested for: {video_path}")
-    
+
     try:
         detections = detect_balls(video_path, frame_skip=frame_skip)
         return jsonify({"ballDetections": detections})
     except Exception as e:
-        logger.exception(f"Error in ball detection: {e}")
+        logger.exception(f"Ball detection error: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/balls/stream', methods=['POST'])
 def balls_stream():
-    """Stream ball detections frame by frame as NDJSON"""
-    data = request.get_json()
-    video_path = data.get('video_path')
+    data = request.get_json() or {}
     frame_skip = data.get('frame_skip', 5)
     confidence_threshold = data.get('confidence_threshold', 0.3)
 
-    if not video_path or not os.path.exists(video_path):
-        return jsonify({"error": "Invalid video_path"}), 400
+    video_path = data.get('video_path') or os.path.join(CACHE_DIR, 'input.mp4')
+    cache_path = os.path.join(CACHE_DIR, 'ball_detections.json')
 
-    logger.info(f"Streaming ball detection requested for: {video_path}")
+    if not os.path.exists(video_path):
+        return jsonify({"error": "No video found. Upload a video first."}), 400
 
     def generate():
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path) as f:
+                    cached = json.load(f)
+                logger.info(f"Returning cached ball detections ({len(cached)} frames)")
+                yield json.dumps({"type": "meta", "totalFrames": len(cached), "cached": True}) + "\n"
+                for detection in cached:
+                    yield json.dumps({"type": "detection", "data": detection, "processed": len(cached), "total": len(cached)}) + "\n"
+                yield json.dumps({"type": "done", "processed": len(cached), "cached": True}) + "\n"
+                return
+            except Exception:
+                pass
+
         from inference import get_model
 
         API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
@@ -355,6 +339,7 @@ def balls_stream():
 
         yield json.dumps({"type": "meta", "totalFrames": frames_to_process, "fps": fps, "videoFrames": total_frames}) + "\n"
 
+        all_detections = []
         frame_count = 0
         processed_count = 0
         start_time = time.time()
@@ -370,51 +355,137 @@ def balls_stream():
 
                 try:
                     results = model.infer(frame)
-                    predictions = []
-                    if isinstance(results, list) and len(results) > 0:
-                        result = results[0]
-                        if isinstance(result, dict):
-                            predictions = result.get("predictions", [])
-                        elif hasattr(result, 'predictions'):
-                            predictions = result.predictions
-                    elif isinstance(results, dict):
-                        predictions = results.get("predictions", [])
-
-                    for pred in predictions:
-                        if isinstance(pred, dict):
-                            conf = pred.get("confidence", 0)
-                            cx, cy = pred.get("x", 0), pred.get("y", 0)
-                            w, h = pred.get("width", 0), pred.get("height", 0)
-                            cls = pred.get("class", "Basketball")
-                        else:
-                            conf = getattr(pred, 'confidence', 0)
-                            cx, cy = getattr(pred, 'x', 0), getattr(pred, 'y', 0)
-                            w, h = getattr(pred, 'width', 0), getattr(pred, 'height', 0)
-                            cls = getattr(pred, 'class', 'Basketball')
-
-                        if conf >= confidence_threshold:
-                            frame_detections.append({
-                                "x": round(cx - w/2), "y": round(cy - h/2),
-                                "w": round(w), "h": round(h),
-                                "confidence": round(conf, 3), "class": cls
-                            })
+                    for pred in _extract_predictions(results):
+                        box = _extract_box(pred, confidence_threshold)
+                        if box:
+                            frame_detections.append(box)
                 except Exception as e:
                     logger.warning(f"Error processing frame {frame_count}: {e}")
 
                 processed_count += 1
                 detection = {"time": round(timestamp, 3), "frame": frame_count, "boxes": frame_detections}
+                all_detections.append(detection)
                 yield json.dumps({"type": "detection", "data": detection, "processed": processed_count, "total": frames_to_process}) + "\n"
 
             frame_count += 1
 
         cap.release()
+
+        try:
+            with open(cache_path, 'w') as f:
+                json.dump(all_detections, f)
+            logger.info(f"Saved {len(all_detections)} ball detections to cache")
+        except Exception as e:
+            logger.warning(f"Failed to cache ball detections: {e}")
+
         elapsed = time.time() - start_time
         logger.info(f"Streaming ball detection complete in {elapsed:.2f}s ({processed_count} frames)")
         yield json.dumps({"type": "done", "processed": processed_count, "elapsed": round(elapsed, 2)}) + "\n"
 
     return Response(stream_with_context(generate()), content_type='application/x-ndjson')
 
+
+@app.route('/export', methods=['POST'])
+def export_video():
+    data = request.get_json()
+    segments = data.get('segments', [])
+
+    if not segments:
+        return jsonify({"error": "No segments provided"}), 400
+
+    input_path = os.path.join(CACHE_DIR, 'input.mp4')
+    if not os.path.exists(input_path):
+        return jsonify({"error": "Input video not found. Please upload a video first."}), 404
+
+    export_dir = os.path.join(CACHE_DIR, 'exports')
+    os.makedirs(export_dir, exist_ok=True)
+
+    timestamp = int(time.time() * 1000)
+    output_path = os.path.join(export_dir, f'export_{timestamp}.mp4')
+
+    filter_complex = ""
+    inputs = ""
+    for i, seg in enumerate(segments):
+        filter_complex += f"[0:v]trim=start={seg['start']}:end={seg['end']},setpts=PTS-STARTPTS[v{i}];"
+        filter_complex += f"[0:a]atrim=start={seg['start']}:end={seg['end']},asetpts=PTS-STARTPTS[a{i}];"
+        inputs += f"[v{i}][a{i}]"
+    filter_complex += f"{inputs}concat=n={len(segments)}:v=1:a=1[outv][outa]"
+
+    logger.info(f"Exporting {len(segments)} segments...")
+
+    try:
+        subprocess.run([
+            'ffmpeg', '-i', input_path,
+            '-filter_complex', filter_complex,
+            '-map', '[outv]', '-map', '[outa]',
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart',
+            output_path, '-y'
+        ], capture_output=True, check=True, timeout=600)
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode() if e.stderr else str(e)
+        logger.error(f"FFmpeg export failed: {stderr}")
+        return jsonify({"error": "Export failed"}), 500
+    except subprocess.TimeoutExpired:
+        logger.error("FFmpeg export timed out")
+        return jsonify({"error": "Export timed out"}), 500
+
+    logger.info(f"Export complete: {output_path}")
+    return send_file(output_path, mimetype='video/mp4', as_attachment=True, download_name='highlight-export.mp4')
+
+
+@app.route('/cache', methods=['GET'])
+def check_cache():
+    video_path = os.path.join(CACHE_DIR, 'input.mp4')
+    scenes_path = os.path.join(CACHE_DIR, 'scenes.json')
+    ball_detections_path = os.path.join(CACHE_DIR, 'ball_detections.json')
+
+    if not os.path.exists(video_path) or not os.path.exists(scenes_path):
+        return jsonify({"exists": False})
+
+    try:
+        with open(scenes_path) as f:
+            scenes = json.load(f)
+    except Exception:
+        return jsonify({"exists": False})
+
+    ball_detections = []
+    if os.path.exists(ball_detections_path):
+        try:
+            with open(ball_detections_path) as f:
+                ball_detections = json.load(f)
+        except Exception:
+            pass
+
+    return jsonify({
+        "exists": True,
+        "videoSize": os.path.getsize(video_path),
+        "scenes": scenes,
+        "ballDetections": ball_detections,
+    })
+
+
+@app.route('/cache', methods=['DELETE'])
+def clear_cache():
+    files = ['input.mp4', 'input_original.mp4', 'scenes.json', 'ball_detections.json']
+    deleted = []
+    errors = []
+
+    for filename in files:
+        filepath = os.path.join(CACHE_DIR, filename)
+        try:
+            os.unlink(filepath)
+            deleted.append(filepath)
+        except FileNotFoundError:
+            errors.append(filepath)
+
+    if deleted:
+        return jsonify({"success": True, "deleted": deleted, "errors": errors})
+    return jsonify({"success": False, "error": "Cache not found"}), 404
+
+
 if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 5001))
-    logger.info(f"🚀 Starting Video Processor API on port {port}")
+    logger.info(f"Starting Video Processor API on port {port}")
     app.run(host='0.0.0.0', port=port, debug=True)

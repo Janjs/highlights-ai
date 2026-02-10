@@ -168,13 +168,11 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
         xhr.open("POST", "/api/process-video")
 
-        xhr.onreadystatechange = () => {
-          if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
-            setStage("processing")
-            const estimatedProcessing = Math.max(5, videoDuration * 0.3)
-            startEstimatedProgress(estimatedProcessing)
-          }
-        }
+        xhr.upload.addEventListener("load", () => {
+          setStage("processing")
+          const estimatedProcessing = Math.max(5, videoDuration * 0.3)
+          startEstimatedProgress(estimatedProcessing)
+        })
 
         xhr.send(formData)
       })

@@ -1,80 +1,41 @@
-import { NextRequest, NextResponse } from "next/server"
-import { stat } from "fs/promises"
-import { readFile } from "fs/promises"
-import path from "path"
+import { NextResponse } from "next/server"
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
 
-export async function GET(request: NextRequest) {
+const FLASK_API_URL = process.env.FLASK_API_URL || "http://localhost:5001"
+
+async function flaskFetch(path: string, options?: { method?: string }) {
+    const { Agent, fetch: undiciFetch } = await import("undici")
+    const agent = new Agent({
+        headersTimeout: 30 * 1000,
+        bodyTimeout: 30 * 1000,
+        connectTimeout: 10 * 1000,
+    })
+    return undiciFetch(`${FLASK_API_URL}${path}`, {
+        ...options,
+        dispatcher: agent,
+    })
+}
+
+export async function GET() {
     try {
-        const projectRoot = process.cwd()
-        const cacheDir = path.join(projectRoot, ".cache")
-        const videoPath = path.join(cacheDir, "input.mp4")
-        const scenesPath = path.join(cacheDir, "scenes.json")
-        const ballDetectionsPath = path.join(cacheDir, "ball_detections.json")
-
-        try {
-            const videoStats = await stat(videoPath)
-            const scenesData = await readFile(scenesPath, "utf-8")
-            const scenes = JSON.parse(scenesData)
-
-            // Try to load ball detections (optional)
-            let ballDetections = []
-            try {
-                const ballData = await readFile(ballDetectionsPath, "utf-8")
-                ballDetections = JSON.parse(ballData)
-            } catch {
-                // Ball detections may not exist
-            }
-
-            return NextResponse.json({
-                exists: true,
-                videoSize: videoStats.size,
-                scenes,
-                ballDetections,
-            })
-        } catch (error) {
-            return NextResponse.json({
-                exists: false,
-            })
-        }
+        const response = await flaskFetch("/cache")
+        const data = (await response.json()) as Record<string, unknown>
+        return NextResponse.json(data)
     } catch (error) {
-        console.error("[API] Error checking cache:", error)
-        return NextResponse.json({ exists: false }, { status: 500 })
+        console.error("[API] Flask proxy error:", error)
+        return NextResponse.json({ exists: false })
     }
 }
 
 export async function DELETE() {
     try {
-        const { unlink } = await import("fs/promises")
-        const projectRoot = process.cwd()
-        const cacheDir = path.join(projectRoot, ".cache")
-        const videoPath = path.join(cacheDir, "input.mp4")
-        const originalVideoPath = path.join(cacheDir, "input_original.mp4")
-        const scenesPath = path.join(cacheDir, "scenes.json")
-        const ballDetectionsPath = path.join(cacheDir, "ball_detections.json")
-
-        const filesToDelete = [videoPath, originalVideoPath, scenesPath, ballDetectionsPath]
-        const deleted: string[] = []
-        const errors: string[] = []
-
-        for (const filePath of filesToDelete) {
-            try {
-                await unlink(filePath)
-                deleted.push(filePath)
-            } catch (error) {
-                errors.push(filePath)
-            }
-        }
-
-        if (deleted.length > 0) {
-            return NextResponse.json({ success: true, deleted, errors })
-        } else {
-            return NextResponse.json({ success: false, error: "Cache not found" }, { status: 404 })
-        }
+        const response = await flaskFetch("/cache", { method: "DELETE" })
+        const data = (await response.json()) as Record<string, unknown>
+        return NextResponse.json(data, { status: response.status })
     } catch (error) {
-        console.error("[API] Error clearing cache:", error)
-        return NextResponse.json({ success: false }, { status: 500 })
+        console.error("[API] Flask proxy error:", error)
+        return NextResponse.json({ success: false }, { status: 502 })
     }
 }

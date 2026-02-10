@@ -47,6 +47,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
   const [canScrollRight, setCanScrollRight] = useState(false)
   const [timelineScroll, setTimelineScroll] = useState({ scrollLeft: 0, scrollWidth: 0 })
   const [isDragging, setIsDragging] = useState(false)
+  const [isScrubbing, setIsScrubbing] = useState(false)
   const [selectedSegments, setSelectedSegments] = useState<Set<number>>(
     () => new Set(videoData.segments.map((_, i) => i)),
   )
@@ -522,6 +523,41 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
     }
   }
 
+  const handleTimelineScrub = (clientX: number) => {
+    const container = timelineScrollRef.current
+    if (!container) return
+    const inner = container.firstElementChild as HTMLElement
+    if (!inner) return
+    const totalWidth = inner.scrollWidth
+    const offsetX = clientX - container.getBoundingClientRect().left + container.scrollLeft
+    const ratio = Math.max(0, Math.min(1, offsetX / totalWidth))
+    handleSeek([ratio * duration])
+  }
+
+  const handlePlayheadMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    e.preventDefault()
+    setIsScrubbing(true)
+    handleTimelineScrub(e.clientX)
+  }
+
+  useEffect(() => {
+    if (isScrubbing) {
+      const onMove = (e: MouseEvent) => {
+        e.preventDefault()
+        handleTimelineScrub(e.clientX)
+      }
+      const onUp = () => setIsScrubbing(false)
+      document.addEventListener("mousemove", onMove)
+      document.addEventListener("mouseup", onUp)
+      return () => {
+        document.removeEventListener("mousemove", onMove)
+        document.removeEventListener("mouseup", onUp)
+      }
+    }
+  }, [isScrubbing, duration])
+
   useEffect(() => {
     if (isDragging) {
       document.addEventListener("mousemove", handleMouseMove)
@@ -716,7 +752,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                   opacity: isExporting ? 1 : 0
                 }}
               />
-              <div className="relative flex items-center justify-center gap-2 z-10 w-full mix-blend-difference text-white">
+              <div className="relative flex items-center justify-center gap-2 z-10 w-full">
                 {isExporting ? (
                   <span className="text-xs font-semibold">{exportProgress}%</span>
                 ) : (
@@ -799,104 +835,47 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
             className="absolute inset-0 z-[5] pointer-events-none"
           />
 
-          <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black via-black/80 to-transparent p-4">
-            <div className="space-y-3">
-              <div
-                className="relative w-full h-6 flex items-center cursor-pointer"
-                onMouseDown={(e) => {
-                  if (e.button !== 0) return
-                  const bar = e.currentTarget
-                  const seek = (clientX: number) => {
-                    const r = bar.getBoundingClientRect()
-                    const ratio = Math.max(0, Math.min(1, (clientX - r.left) / r.width))
-                    handleSeek([ratio * duration])
-                  }
-                  seek(e.clientX)
-                  const onMove = (e: MouseEvent) => seek(e.clientX)
-                  const onUp = () => {
-                    document.removeEventListener("mousemove", onMove)
-                    document.removeEventListener("mouseup", onUp)
-                  }
-                  document.addEventListener("mousemove", onMove)
-                  document.addEventListener("mouseup", onUp)
-                }}
-              >
-                <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full overflow-hidden bg-secondary pointer-events-none">
-                  {duration > 0 &&
-                    videoData.segments.map((seg, i) => {
-                      const selected = selectedSegments.has(i)
-                      return (
-                        <div
-                          key={i}
-                          className={`absolute top-0 h-full ${selected
-                            ? currentSegment === i
-                              ? "bg-primary"
-                              : "bg-primary/25"
-                            : "bg-muted/50"
-                            }`}
-                          style={{
-                            left: `${(seg.start / duration) * 100}%`,
-                            width: `${((seg.end - seg.start) / duration) * 100}%`,
-                          }}
-                        />
-                      )
-                    })}
-                </div>
-                <div
-                  className="absolute left-0 top-1/2 -translate-y-1/2 h-2 rounded-l-full bg-primary/30 pointer-events-none"
-                  style={{
-                    width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-                  }}
-                />
-                <div
-                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 border-primary bg-background pointer-events-none"
-                  style={{
-                    left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-                  }}
+          <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black/80 to-transparent p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
+                  {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </Button>
+                <Slider
+                  value={[isMuted ? 0 : volume]}
+                  max={1}
+                  step={0.01}
+                  onValueChange={handleVolumeChange}
+                  className="w-24"
                 />
               </div>
-              <div className="flex justify-between text-xs text-white/70">
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={playPreviousSegment}
+                  disabled={getPrevSelected(currentSegment) === null}
+                >
+                  <SkipBack className="h-5 w-5" />
+                </Button>
+                <Button size="icon-lg" onClick={togglePlay}>
+                  {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={playNextSegment}
+                  disabled={getNextSelected(currentSegment) === null}
+                >
+                  <SkipForward className="h-5 w-5" />
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-white/70 w-32 justify-end">
                 <span>{formatTime(currentTime)}</span>
+                <span>/</span>
                 <span>{formatTime(duration)}</span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
-                    {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                  </Button>
-                  <Slider
-                    value={[isMuted ? 0 : volume]}
-                    max={1}
-                    step={0.01}
-                    onValueChange={handleVolumeChange}
-                    className="w-24"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={playPreviousSegment}
-                    disabled={getPrevSelected(currentSegment) === null}
-                  >
-                    <SkipBack className="h-5 w-5" />
-                  </Button>
-                  <Button size="icon-lg" onClick={togglePlay}>
-                    {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={playNextSegment}
-                    disabled={getNextSelected(currentSegment) === null}
-                  >
-                    <SkipForward className="h-5 w-5" />
-                  </Button>
-                </div>
-
-                <div className="w-32" />
               </div>
             </div>
           </div>
@@ -934,28 +913,29 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
           </div>
 
           <div className="relative w-full h-[160px] overflow-visible">
-            {isBallDetectionLoading && duration > 0 && (
-              <div
-                className="absolute top-0 right-0 h-full z-[5] pointer-events-none transition-all duration-500 ease-linear bg-background/50"
-                style={{ width: `${100 - ballDetectionProgress}%` }}
-              />
-            )}
             {duration > 0 && (
               <div
-                className="pointer-events-none absolute z-30 -translate-x-1/2"
+                className="absolute z-30 -translate-x-1/2 cursor-col-resize"
                 style={{
-                  left: (currentTime / duration) * timelineScroll.scrollWidth - timelineScroll.scrollLeft,
-                  top: -8,
+                  left: Math.max(0, Math.min(
+                    timelineScrollRef.current?.clientWidth ?? 0,
+                    (currentTime / duration) * timelineScroll.scrollWidth - timelineScroll.scrollLeft
+                  )),
+                  top: -5,
                 }}
+                onMouseDown={handlePlayheadMouseDown}
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="h-5 w-5 text-secondary-foreground"
-                >
-                  <path d="M12 18L4 6h16L12 18z" />
-                </svg>
+                <div className="w-3.5 h-3.5 rounded-full bg-primary border-2 border-background" />
               </div>
+            )}
+            {isBallDetectionLoading && duration > 0 && (
+              <div
+                className="absolute top-0 right-0 h-full z-[5] pointer-events-none transition-all duration-500 ease-linear"
+                style={{
+                  width: `${100 - ballDetectionProgress}%`,
+                  backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 4px, oklch(0.5 0 0 / 0.15) 4px, oklch(0.5 0 0 / 0.15) 8px)",
+                }}
+              />
             )}
             {canScrollLeft && (
               <Button
@@ -979,7 +959,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
             )}
             <div
               ref={timelineScrollRef}
-              className="overflow-x-auto overflow-y-hidden scrollbar-hide w-full h-[160px] cursor-grab active:cursor-grabbing"
+              className="overflow-x-auto overflow-y-hidden scrollbar-hide w-full h-[160px] cursor-grab active:cursor-grabbing rounded-b-lg"
               onScroll={updateScrollButtons}
               onMouseDown={handleMouseDown}
               onWheel={(e) => {
@@ -993,7 +973,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
               }}
             >
               <div
-                className="relative h-full min-w-full bg-black/40"
+                className="relative h-full min-w-full bg-muted"
                 style={{ width: `${zoom * 100}%`, minHeight: "100%" }}
               >
                 {videoData.segments.map((segment, index) => {
@@ -1003,11 +983,11 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                       role="button"
                       tabIndex={0}
                       key={index}
-                      className={`absolute top-0 h-full border-r border-border transition-all ${!selected
-                        ? "bg-muted/50"
+                      className={`absolute top-0 h-full border-r border-border/50 transition-all ${!selected
+                        ? "bg-muted-foreground/20"
                         : currentSegment === index
-                          ? "bg-primary"
-                          : "bg-primary/25 hover:bg-primary/30"
+                          ? "bg-primary/30"
+                          : "bg-primary/15 hover:bg-primary/20"
                         }`}
                       style={{
                         left: `${(segment.start / duration) * 100}%`,
@@ -1062,20 +1042,35 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                               return next
                             })
                           }
-                          className="border-border bg-background/80 data-[state=checked]:!bg-background/80 data-[state=checked]:!text-foreground data-[state=checked]:!border-foreground"
+                          className="border-foreground/30 bg-background/60 data-[state=checked]:!bg-primary data-[state=checked]:!text-primary-foreground data-[state=checked]:!border-primary"
                         />
                       </div>
-                      <div className="flex h-full flex-col items-center justify-center text-xs font-medium text-foreground">
+                      <div className={`flex h-full flex-col items-center justify-center text-xs font-medium ${
+                        !selected
+                          ? "text-muted-foreground"
+                          : currentSegment === index
+                            ? "text-primary"
+                            : "text-foreground"
+                      }`}>
                         <div>S{index + 1}</div>
-                        <div className="text-[10px] text-muted-foreground">{formatTime(segment.start)}</div>
+                        <div className={`text-[10px] ${
+                          !selected
+                            ? "text-muted-foreground/60"
+                            : currentSegment === index
+                              ? "text-primary/70"
+                              : "text-muted-foreground"
+                        }`}>{formatTime(segment.start)}</div>
                       </div>
                     </div>
                   )
                 })}
                 <div
-                  className="pointer-events-none absolute top-0 h-full w-0.5 -translate-x-1/2 z-20 bg-secondary-foreground"
-                  style={{ left: `${(currentTime / duration) * 100}%` }}
-                />
+                  className="absolute top-0 h-full z-20 -translate-x-1/2 cursor-col-resize"
+                  style={{ left: `${(currentTime / duration) * 100}%`, width: "12px" }}
+                  onMouseDown={handlePlayheadMouseDown}
+                >
+                  <div className="absolute left-1/2 -translate-x-1/2 top-0 h-full w-0.5 bg-primary" />
+                </div>
                 {showBallTracking && ballDetections && duration > 0 && ballDetections
                   .filter(detection => detection.boxes.some(box => box.class === "Made-Basket"))
                   .flatMap((detection, dIndex) =>
