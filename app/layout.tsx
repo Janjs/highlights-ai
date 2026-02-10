@@ -14,9 +14,8 @@ const _geistMono = V0_Font_Geist_Mono({ subsets: ['latin'], weight: ["100", "200
 const _sourceSerif_4 = V0_Font_Source_Serif_4({ subsets: ['latin'], weight: ["200", "300", "400", "500", "600", "700", "800", "900"] })
 
 export const metadata: Metadata = {
-  title: "Highlight AI",
-  description: "Created with v0",
-  generator: "v0.app",
+  title: "Highlight AI — Turn game footage into highlight reels",
+  description: "Upload basketball footage and let AI detect scenes, track the ball, and find made baskets. Pick your best moments and export a polished highlight reel in minutes.",
 }
 
 export default function RootLayout({

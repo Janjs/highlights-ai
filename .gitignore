@@ -1,4 +1,5 @@
 *.mp4
+!public/demo.mp4
 *.mov
 *.avi
 *.webm
