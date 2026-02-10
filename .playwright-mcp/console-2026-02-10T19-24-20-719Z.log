@@ -1,0 +1,15 @@
+[  789973ms] [WARNING] [HMR] Invalid message: {"isTrusted":true}
+TypeError: Cannot convert undefined or null to object
+    at Object.keys (<anonymous>)
+    at extractModulesFromTurbopackMessage (http://localhost:3000/_next/static/chunks/f0026_next_dist_client_fd07184e._.js:10235:39)
+    at TurbopackHmr.onTurbopackMessage (http://localhost:3000/_next/static/chunks/f0026_next_dist_client_fd07184e._.js:10182:32)
+    at processMessage (http://localhost:3000/_next/static/chunks/f0026_next_dist_client_fd07184e._.js:10611:30)
+    at WebSocket.handleMessage (http://localhost:3000/_next/static/chunks/f0026_next_dist_client_fd07184e._.js:9947:52) @ http://localhost:3000/_next/static/chunks/f0026_next_dist_024d02af._.js:2294
+[  790055ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/:0
+[  790161ms] ReferenceError: Toaster is not defined
+    at RootLayout (about://React/Server/file:///Users/jan/Developer/highlight-ai/.next/dev/server/chunks/ssr/%5Broot-of-the-server%5D__427ece26._.js?0:180:400)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-server-dom-turbopack_0275a907._.js:1848:106)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-server-dom-turbopack_0275a907._.js:2356:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-server-dom-turbopack_0275a907._.js:2315:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-server-dom-turbopack_0275a907._.js:2425:98)
+    at progress (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-server-dom-turbopack_0275a907._.js:2594:13)

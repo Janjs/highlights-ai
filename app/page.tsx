@@ -19,7 +19,7 @@ export default function Home() {
   } | null>(null)
   const [ballDetections, setBallDetections] = useState<BallDetection[] | undefined>(undefined)
   const [ballDetectionError, setBallDetectionError] = useState<string | null>(null)
-  const [aiHighlighting, setAiHighlighting] = useState(false)
+  const [aiHighlighting, setAiHighlighting] = useState(true)
   const [isLoadingCache, setIsLoadingCache] = useState(useCache)
 
   useEffect(() => {

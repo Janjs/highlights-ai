@@ -59,7 +59,9 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   const [exportProgress, setExportProgress] = useState(0)
   const [showBallTracking, setShowBallTracking] = useState(true)
   const [showBallError, setShowBallError] = useState(!!ballDetectionError)
+  const [ballDetectionResult, setBallDetectionResult] = useState<{ basketCount: number } | null>(null)
   const dragStartRef = useRef({ x: 0, scrollLeft: 0 })
+  const videoRetryCountRef = useRef(0)
 
   const [isBallDetectionLoading, setIsBallDetectionLoading] = useState(false)
   const [ballDetectionProgress, setBallDetectionProgress] = useState(0)
@@ -196,6 +198,8 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
               const finalDetections = [...accumulatedDetectionsRef.current]
               onBallDetectionsLoaded(finalDetections)
               applyBasketSelection(finalDetections)
+              const basketCount = finalDetections.filter(d => d.boxes.some(b => b.class === "Made-Basket")).length
+              setBallDetectionResult({ basketCount })
             }
           } catch {
             // skip malformed lines
@@ -218,6 +222,8 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
             const final = [...accumulatedDetectionsRef.current]
             onBallDetectionsLoaded(final)
             applyBasketSelection(final)
+            const basketCount = final.filter(d => d.boxes.some(b => b.class === "Made-Basket")).length
+            setBallDetectionResult({ basketCount })
             return
           }
         } catch {
@@ -228,6 +234,8 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       const finalDetections = [...accumulatedDetectionsRef.current]
       onBallDetectionsLoaded(finalDetections)
       applyBasketSelection(finalDetections)
+      const basketCount = finalDetections.filter(d => d.boxes.some(b => b.class === "Made-Basket")).length
+      setBallDetectionResult({ basketCount })
     } catch (error) {
       console.error("[CLIENT] Ball detection failed:", error)
       if (abortController.signal.aborted) {
@@ -869,18 +877,19 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-6 md:px-10 lg:px-12 py-6 md:py-6 flex flex-col gap-6">
         <div className="flex items-center justify-between shrink-0">
-          <h1 className="text-lg font-bold text-foreground">
+          <h1 className="text-xl font-bold text-foreground">
             Highlight AI
           </h1>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
-              size="icon-sm"
+              size="sm"
               onClick={rerunBallDetection}
               disabled={isBallDetectionLoading}
               title={hasBallDetections ? "Rerun Detection" : "Run Detection"}
             >
               <Icons.aiSpark className="h-4 w-4" />
+              {hasBallDetections ? "Rerun Detection" : "Run Detection"}
             </Button>
             <Button variant="outline" size="sm" onClick={onReset}>
               <Icons.rotateCcw className="h-4 w-4" />
@@ -943,6 +952,23 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
           </div>
         )}
 
+        {ballDetectionResult && !isBallDetectionLoading && (
+          <div className="flex items-center gap-3 rounded-lg border border-green-500/30 bg-green-500/5 px-4 py-2.5">
+            <Icons.check className="h-4 w-4 shrink-0 text-green-500" />
+            <p className="flex-1 text-sm text-foreground">
+              AI detection complete
+              <span className="ml-2 text-xs text-muted-foreground">
+                {ballDetectionResult.basketCount > 0
+                  ? `Found ${ballDetectionResult.basketCount} made basket${ballDetectionResult.basketCount === 1 ? "" : "s"}`
+                  : "No made baskets detected"}
+              </span>
+            </p>
+            <Button variant="ghost" size="icon-sm" onClick={() => setBallDetectionResult(null)}>
+              <Icons.x className="h-3.5 w-3.5 text-green-500" />
+            </Button>
+          </div>
+        )}
+
         <div ref={videoContainerRef} className="rounded-xl overflow-hidden bg-black relative aspect-video">
           <video
             ref={videoRef}
@@ -951,18 +977,19 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
             onClick={togglePlay}
             preload="auto"
             playsInline
-            onError={(e) => {
-              const video = e.target as HTMLVideoElement
-              console.error("[VIDEO] Error loading video")
-              console.error("[VIDEO] Video src:", videoData.url)
-              console.error("[VIDEO] Error code:", video.error?.code)
-              console.error("[VIDEO] Error message:", video.error?.message)
-              console.error("[VIDEO] Network state:", video.networkState)
-              console.error("[VIDEO] Ready state:", video.readyState)
+            onError={() => {
+              if (videoRetryCountRef.current < 3) {
+                videoRetryCountRef.current++
+                setTimeout(() => {
+                  const video = videoRef.current
+                  if (video) {
+                    video.src = videoData.url
+                    video.load()
+                  }
+                }, 500 * videoRetryCountRef.current)
+              }
             }}
-            onLoadStart={() => console.log("[VIDEO] Load started")}
-            onLoadedMetadata={() => console.log("[VIDEO] Metadata loaded")}
-            onCanPlay={() => console.log("[VIDEO] Can play")}
+            onCanPlay={() => { videoRetryCountRef.current = 0 }}
           />
 
           <canvas
