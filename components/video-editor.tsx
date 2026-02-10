@@ -814,31 +814,25 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
         const bw = box.w * scaleX
         const bh = box.h * scaleY
 
+        const cx = x + bw / 2
+        const cy = y + bh / 2
+        const radius = Math.max(bw, bh) / 2
+
         ctx.shadowColor = "#ff6600"
         ctx.shadowBlur = 12
 
-        ctx.fillStyle = "rgba(255, 102, 0, 0.2)"
-        ctx.fillRect(x, y, bw, bh)
+        ctx.fillStyle = "rgba(255, 102, 0, 0.25)"
+        ctx.beginPath()
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+        ctx.fill()
 
         ctx.strokeStyle = "#ff6600"
         ctx.lineWidth = 3
-        ctx.strokeRect(x, y, bw, bh)
+        ctx.beginPath()
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+        ctx.stroke()
 
         ctx.shadowBlur = 0
-
-        const label = `${box.class ?? "Ball"} ${Math.round(box.confidence * 100)}%`
-        ctx.font = "bold 12px sans-serif"
-        const labelW = ctx.measureText(label).width + 10
-        const labelH = 22
-        const labelY = y - labelH - 4
-
-        ctx.fillStyle = "rgba(255, 102, 0, 0.9)"
-        ctx.beginPath()
-        ctx.roundRect(x, labelY, labelW, labelH, 4)
-        ctx.fill()
-
-        ctx.fillStyle = "#fff"
-        ctx.fillText(label, x + 5, labelY + 15)
       }
     }
 
@@ -1250,7 +1244,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
                       .map((box, bIndex) => (
                         <div
                           key={`basket-${dIndex}-${bIndex}`}
-                          className="pointer-events-none absolute bottom-1 w-4 h-4 -translate-x-1/2 z-10"
+                          className="pointer-events-none absolute bottom-1 w-4 h-4 -translate-x-1/2 z-10 rounded-full overflow-hidden"
                           style={{ left: `${(detection.time / duration) * 100}%` }}
                           title={`Made basket at ${detection.time.toFixed(1)}s (${(box.confidence * 100).toFixed(0)}%)`}
                         >
