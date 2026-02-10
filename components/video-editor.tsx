@@ -72,6 +72,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   const lastFlushRef = useRef(0)
   const isStreamingRef = useRef(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const madeBasketLabelsRef = useRef<Map<number, { firstSeen: number, box: { x: number, y: number, w: number, h: number } }>>(new Map())
 
   const hasBallDetections = ballDetections && ballDetections.length > 0
 
@@ -772,7 +773,6 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       ctx.clearRect(0, 0, w, h)
 
       if (!showBallTracking) return
-      if (!video.videoWidth || !video.videoHeight) return
 
       const currentVideoTime = video.currentTime
       let closestDetection = ballDetections[0]
@@ -786,7 +786,11 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
         }
       }
 
-      if (minDiff > 0.2 || !closestDetection.boxes.length) return
+      const now = performance.now()
+      const delay = 1500
+      const fadeDuration = 800
+
+      if (!video.videoWidth || !video.videoHeight) return
 
       const videoAspect = video.videoWidth / video.videoHeight
       const containerAspect = w / h
@@ -808,31 +812,68 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       const scaleX = displayWidth / video.videoWidth
       const scaleY = displayHeight / video.videoHeight
 
-      for (const box of closestDetection.boxes) {
-        const x = offsetX + box.x * scaleX
-        const y = offsetY + box.y * scaleY
-        const bw = box.w * scaleX
-        const bh = box.h * scaleY
+      if (minDiff <= 0.2 && closestDetection.boxes.length) {
+        for (const box of closestDetection.boxes) {
+          const x = offsetX + box.x * scaleX
+          const y = offsetY + box.y * scaleY
+          const bw = box.w * scaleX
+          const bh = box.h * scaleY
 
-        const cx = x + bw / 2
-        const cy = y + bh / 2
-        const radius = Math.max(bw, bh) / 2
+          const cx = x + bw / 2
+          const cy = y + bh / 2
+          const radius = Math.max(bw, bh) / 2
 
-        ctx.shadowColor = "#ff6600"
-        ctx.shadowBlur = 12
+          ctx.shadowColor = "#ff6600"
+          ctx.shadowBlur = 12
 
-        ctx.fillStyle = "rgba(255, 102, 0, 0.25)"
+          ctx.fillStyle = "rgba(255, 102, 0, 0.25)"
+          ctx.beginPath()
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+          ctx.fill()
+
+          ctx.strokeStyle = "#ff6600"
+          ctx.lineWidth = 3
+          ctx.beginPath()
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+          ctx.stroke()
+
+          ctx.shadowBlur = 0
+
+          if (box.class === "Made-Basket") {
+            const key = closestDetection.time
+            if (!madeBasketLabelsRef.current.has(key)) {
+              madeBasketLabelsRef.current.set(key, { firstSeen: now, box: { x: box.x, y: box.y, w: box.w, h: box.h } })
+            }
+          }
+        }
+      }
+
+      for (const [key, entry] of madeBasketLabelsRef.current) {
+        const elapsed = now - entry.firstSeen
+        if (elapsed > delay + fadeDuration) {
+          madeBasketLabelsRef.current.delete(key)
+          continue
+        }
+        let opacity = 1
+        if (elapsed > delay) {
+          opacity = Math.max(0, 1 - (elapsed - delay) / fadeDuration)
+        }
+        const lx = offsetX + entry.box.x * scaleX
+        const ly = offsetY + entry.box.y * scaleY
+
+        const label = "Made Basket"
+        ctx.font = "bold 12px sans-serif"
+        const labelW = ctx.measureText(label).width + 10
+        const labelH = 22
+        const labelY = ly - labelH - 4
+
+        ctx.fillStyle = `rgba(255, 102, 0, ${0.9 * opacity})`
         ctx.beginPath()
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+        ctx.roundRect(lx, labelY, labelW, labelH, 4)
         ctx.fill()
 
-        ctx.strokeStyle = "#ff6600"
-        ctx.lineWidth = 3
-        ctx.beginPath()
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-        ctx.stroke()
-
-        ctx.shadowBlur = 0
+        ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`
+        ctx.fillText(label, lx + 5, labelY + 15)
       }
     }
 

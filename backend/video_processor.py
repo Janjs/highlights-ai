@@ -303,7 +303,7 @@ def balls_only():
 def balls_stream():
     data = request.get_json() or {}
     frame_skip = data.get('frame_skip', 2)
-    confidence_threshold = data.get('confidence_threshold', 0.5)
+    confidence_threshold = data.get('confidence_threshold', 0.1)
 
     video_path = data.get('video_path') or os.path.join(CACHE_DIR, 'input.mp4')
     cache_path = os.path.join(CACHE_DIR, 'ball_detections.json')
