@@ -266,7 +266,8 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
       <Card className="w-full max-w-2xl p-8">
         <div className="mb-8 text-center">
-          <Link href="/" className="mb-2 inline-block text-3xl font-bold text-foreground hover:opacity-80 transition-opacity">
+          <Link href="/" className="mb-2 inline-flex items-center gap-2 text-3xl font-bold text-foreground hover:opacity-80 transition-opacity">
+            <Icons.appIcon className="h-8 w-8 text-primary" />
             Highlight AI
           </Link>
           <p className="text-muted-foreground">Upload your video to automatically detect and split scenes</p>
@@ -298,15 +299,29 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
           </div>
         ) : (
           <div className="space-y-6 rounded-lg bg-muted/30 p-8">
-            <div className="flex items-center justify-between">
-              {stages.map((s, i) => {
-                const isCompleted = i < currentStageIndex
-                const isCurrent = i === currentStageIndex
-                return (
-                  <div key={s.key} className="flex flex-1 items-center">
-                    <div className="flex flex-col items-center gap-1.5">
+            <div className="relative">
+              <div
+                className="absolute left-4 right-4 top-4 h-px bg-border"
+                aria-hidden
+              />
+              <div
+                className="absolute left-4 top-4 h-px bg-primary transition-[width] duration-300"
+                style={{
+                  width:
+                    stages.length > 1
+                      ? `calc((100% - 2rem) * ${currentStageIndex / (stages.length - 1)})`
+                      : "0%",
+                }}
+                aria-hidden
+              />
+              <div className="relative z-10 flex justify-between">
+                {stages.map((s, i) => {
+                  const isCompleted = i < currentStageIndex
+                  const isCurrent = i === currentStageIndex
+                  return (
+                    <div key={s.key} className="flex flex-col items-center gap-1.5">
                       <div
-                        className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
                           isCompleted
                             ? "bg-primary text-primary-foreground"
                             : isCurrent
@@ -324,16 +339,9 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
                         {s.label}
                       </span>
                     </div>
-                    {i < stages.length - 1 && (
-                      <div
-                        className={`mx-3 h-px flex-1 ${
-                          i < currentStageIndex ? "bg-primary" : "bg-border"
-                        }`}
-                      />
-                    )}
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
 
             <div className="space-y-2">

@@ -10,6 +10,8 @@ interface BallDetection {
   boxes: Array<{ x: number; y: number; w: number; h: number; confidence: number }>
 }
 
+const DEMO_VIDEO_URL = "/demo.mp4"
+
 export default function EditorPage() {
   const useCache = process.env.NEXT_PUBLIC_CACHE === "1" || process.env.NEXT_PUBLIC_CACHE === "true"
 
@@ -21,6 +23,31 @@ export default function EditorPage() {
   const [ballDetectionError, setBallDetectionError] = useState<string | null>(null)
   const [aiHighlighting, setAiHighlighting] = useState(true)
   const [isLoadingCache, setIsLoadingCache] = useState(useCache)
+  const [isLoadingDemo, setIsLoadingDemo] = useState(!useCache)
+
+  const loadDemoVideo = useCallback(async () => {
+    try {
+      const [scenesRes, detectionsRes] = await Promise.all([
+        fetch("/demo-scenes.json"),
+        fetch("/demo-detections.json"),
+      ])
+      const scenes: Array<{ start: number; end: number }> = await scenesRes.json()
+      const segments = scenes.map((scene) => ({
+        start: scene.start,
+        end: scene.end,
+        url: DEMO_VIDEO_URL,
+      }))
+      setVideoData({ url: DEMO_VIDEO_URL, segments })
+      if (detectionsRes.ok) {
+        const detections: BallDetection[] = await detectionsRes.json()
+        if (detections?.length) setBallDetections(detections)
+      }
+    } catch (error) {
+      console.error("[CLIENT] Error loading demo video:", error)
+    } finally {
+      setIsLoadingDemo(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!useCache) {
@@ -45,16 +72,25 @@ export default function EditorPage() {
           if (data.ballDetections?.length) {
             setBallDetections(data.ballDetections)
           }
+        } else {
+          await loadDemoVideo()
         }
       } catch (error) {
         console.error("[CLIENT] Error loading cached video:", error)
+        await loadDemoVideo()
       } finally {
         setIsLoadingCache(false)
       }
     }
 
     loadCachedVideo()
-  }, [useCache])
+  }, [useCache, loadDemoVideo])
+
+  useEffect(() => {
+    if (!useCache && !videoData) {
+      loadDemoVideo()
+    }
+  }, [useCache, videoData, loadDemoVideo])
 
   const handleBallDetectionsLoaded = useCallback(
     (detections: BallDetection[], error?: string | null) => {
@@ -64,11 +100,13 @@ export default function EditorPage() {
     [],
   )
 
-  if (isLoadingCache) {
+  if (isLoadingCache || (isLoadingDemo && !videoData)) {
     return (
       <main className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <p className="text-muted-foreground">Loading cached video...</p>
+          <p className="text-muted-foreground">
+            {isLoadingCache ? "Loading cached video..." : "Loading demo video..."}
+          </p>
         </div>
       </main>
     )
