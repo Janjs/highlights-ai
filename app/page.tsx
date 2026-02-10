@@ -289,10 +289,10 @@ export default function LandingPage() {
         </div>
 
         <div className="relative mx-auto max-w-4xl text-center">
-          <div className="mb-6 flex items-center justify-center gap-1">
+          <Link href="/" className="mb-6 flex items-center justify-center gap-1 hover:opacity-80 transition-opacity">
             <Icons.appIcon className="h-7 w-7 text-primary" />
             <span className="text-2xl font-semibold text-foreground">Highlight AI</span>
-          </div>
+          </Link>
 
           <Badge variant="secondary" className="mb-6">
             <Icons.aiSpark className="h-3.5 w-3.5 text-primary" />
@@ -404,10 +404,10 @@ export default function LandingPage() {
 
       <footer className="border-t px-6 py-8">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Link href="/" className="flex items-center gap-2 text-sm text-muted-foreground hover:opacity-80 transition-opacity">
             <Icons.appIcon className="h-4 w-4 text-primary" />
             Highlight AI
-          </div>
+          </Link>
           <p className="text-xs text-muted-foreground">Built with AI + computer vision</p>
         </div>
       </footer>

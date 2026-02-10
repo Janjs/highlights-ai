@@ -2,6 +2,7 @@
 
 import type React from "react"
 
+import Link from "next/link"
 import { useState, useCallback, useEffect, useRef } from "react"
 import { Icons } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -265,9 +266,9 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
       <Card className="w-full max-w-2xl p-8">
         <div className="mb-8 text-center">
-          <h1 className="mb-2 text-3xl font-bold text-foreground">
+          <Link href="/" className="mb-2 inline-block text-3xl font-bold text-foreground hover:opacity-80 transition-opacity">
             Highlight AI
-          </h1>
+          </Link>
           <p className="text-muted-foreground">Upload your video to automatically detect and split scenes</p>
         </div>
 

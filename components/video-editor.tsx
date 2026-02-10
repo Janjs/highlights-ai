@@ -2,6 +2,7 @@
 
 import type React from "react"
 
+import Link from "next/link"
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Icons } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
@@ -912,9 +913,9 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-6 md:px-10 lg:px-12 py-6 md:py-6 flex flex-col gap-6">
         <div className="flex items-center justify-between shrink-0">
-          <h1 className="text-xl font-bold text-foreground">
+          <Link href="/" className="text-xl font-bold text-foreground hover:opacity-80 transition-opacity">
             Highlight AI
-          </h1>
+          </Link>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
