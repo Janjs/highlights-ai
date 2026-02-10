@@ -108,7 +108,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
 
     const abortController = new AbortController()
     abortControllerRef.current = abortController
-    const timeout = setTimeout(() => abortController.abort(), 10 * 60 * 1000)
+    const timeout = setTimeout(() => abortController.abort("Ball detection timed out"), 10 * 60 * 1000)
 
     const applyBasketSelection = (detections: BallDetection[]) => {
       const basketTimes = detections
@@ -266,7 +266,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   }, [isBallDetectionLoading, onBallDetectionsLoaded, startBallDetection])
 
   const stopBallDetection = useCallback(() => {
-    abortControllerRef.current?.abort()
+    abortControllerRef.current?.abort("Ball detection stopped")
   }, [])
 
   useEffect(() => {

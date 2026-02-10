@@ -1,0 +1,21 @@
+[  198248ms] ReferenceError: hasVideo is not defined
+    at DemoVideo (http://localhost:3000/_next/static/chunks/_f0e778c1._.js?id=%255Bproject%255D%252Fapp%252Fpage.tsx+%255Bapp-client%255D+%2528ecmascript%2529:206:5)
+    at Object.react_stack_bottom_frame (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:14746:24)
+    at renderWithHooks (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:4636:24)
+    at updateFunctionComponent (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:6091:21)
+    at beginWork (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:6672:24)
+    at runWithFiberInDEV (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:959:74)
+    at performUnitOfWork (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:9487:97)
+    at workLoopSync (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:9381:40)
+    at renderRootSync (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:9365:13)
+    at performWorkOnRoot (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:9030:47)
+    at performSyncWorkOnRoot (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:10163:9)
+    at flushSyncWorkAcrossRoots_impl (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:10079:316)
+    at flushSyncWork$1 (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:9162:86)
+    at Object.scheduleRefresh (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_react-dom_0166b3d9._.js:294:13)
+    at http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_c5efbfee._.js:391:33
+    at Set.forEach (<anonymous>)
+    at Object.performReactRefresh (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_c5efbfee._.js:384:38)
+    at applyUpdate (http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_c5efbfee._.js:878:31)
+    at http://localhost:3000/_next/static/chunks/f0026_next_dist_compiled_c5efbfee._.js:886:13
+[  205339ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/f0026_next_dist_024d02af._.js:2294
