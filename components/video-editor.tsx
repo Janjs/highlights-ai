@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Play, Pause, SkipForward, SkipBack, RotateCcw, Download, Volume2, VolumeX, ChevronLeft, ChevronRight, Eye, EyeOff, AlertTriangle, X } from "lucide-react"
+import { Icons } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -12,7 +12,6 @@ import { Progress } from "@/components/ui/progress"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { ThemeSwitcher } from "@/components/theme-switcher"
-import { AppIcon } from "@/components/app-icon"
 
 interface BallDetection {
   time: number
@@ -27,11 +26,12 @@ interface VideoEditorProps {
   }
   ballDetections?: BallDetection[]
   ballDetectionError?: string | null
+  aiHighlighting?: boolean
   onBallDetectionsLoaded: (detections: BallDetection[], error?: string | null) => void
   onReset: () => void
 }
 
-export function VideoEditor({ videoData, ballDetections, ballDetectionError, onBallDetectionsLoaded, onReset }: VideoEditorProps) {
+export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiHighlighting = true, onBallDetectionsLoaded, onReset }: VideoEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
@@ -81,9 +81,15 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
     }, 300)
   }, [duration])
 
-  const startBallDetection = useCallback(async () => {
-    if (hasBallDetections || ballDetectionAttemptedRef.current) return
+  const startBallDetection = useCallback(async (force = false) => {
+    if (!force && (!aiHighlighting || hasBallDetections || ballDetectionAttemptedRef.current)) return
     ballDetectionAttemptedRef.current = true
+
+    if (force) {
+      try {
+        await fetch("/api/detect-balls/cache", { method: "DELETE" })
+      } catch {}
+    }
 
     setIsBallDetectionLoading(true)
     setBallDetectionProgress(0)
@@ -94,6 +100,19 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
 
     const abortController = new AbortController()
     const timeout = setTimeout(() => abortController.abort(), 10 * 60 * 1000)
+
+    const applyBasketSelection = (detections: BallDetection[]) => {
+      const basketTimes = detections
+        .filter((d) => d.boxes.some((b) => b.class === "Made-Basket"))
+        .map((d) => d.time)
+      const segmentsWithBaskets = new Set<number>()
+      videoData.segments.forEach((seg, i) => {
+        if (basketTimes.some((t) => t >= seg.start && t < seg.end)) {
+          segmentsWithBaskets.add(i)
+        }
+      })
+      setSelectedSegments(segmentsWithBaskets)
+    }
 
     try {
       const response = await fetch("/api/detect-balls", {
@@ -168,7 +187,9 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
 
             if (parsed.type === "done") {
               setBallDetectionProgress(100)
-              onBallDetectionsLoaded([...accumulatedDetectionsRef.current])
+              const finalDetections = [...accumulatedDetectionsRef.current]
+              onBallDetectionsLoaded(finalDetections)
+              applyBasketSelection(finalDetections)
             }
           } catch {
             // skip malformed lines
@@ -187,12 +208,20 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
             setShowBallError(true)
             return
           }
+          if (parsed.type === "done") {
+            const final = [...accumulatedDetectionsRef.current]
+            onBallDetectionsLoaded(final)
+            applyBasketSelection(final)
+            return
+          }
         } catch {
           // skip
         }
       }
 
-      onBallDetectionsLoaded([...accumulatedDetectionsRef.current])
+      const finalDetections = [...accumulatedDetectionsRef.current]
+      onBallDetectionsLoaded(finalDetections)
+      applyBasketSelection(finalDetections)
     } catch (error) {
       console.error("[CLIENT] Ball detection failed:", error)
       const message = abortController.signal.aborted
@@ -209,16 +238,24 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
       setIsBallDetectionLoading(false)
       setBallDetectionProgress(0)
     }
-  }, [hasBallDetections, onBallDetectionsLoaded, startEstimatedProgress])
+  }, [aiHighlighting, hasBallDetections, onBallDetectionsLoaded, startEstimatedProgress])
+
+  const rerunBallDetection = useCallback(() => {
+    if (isBallDetectionLoading) return
+    onBallDetectionsLoaded([], null)
+    setShowBallError(false)
+    ballDetectionAttemptedRef.current = false
+    startBallDetection(true)
+  }, [isBallDetectionLoading, onBallDetectionsLoaded, startBallDetection])
 
   useEffect(() => {
-    if (!hasBallDetections && !isBallDetectionLoading && !ballDetectionAttemptedRef.current && duration > 0) {
+    if (aiHighlighting && !hasBallDetections && !isBallDetectionLoading && !ballDetectionAttemptedRef.current && duration > 0) {
       startBallDetection()
     }
     return () => {
       if (ballDetectionTimerRef.current) clearInterval(ballDetectionTimerRef.current)
     }
-  }, [duration])
+  }, [duration, aiHighlighting])
 
   useEffect(() => {
     if (ballDetectionError) setShowBallError(true)
@@ -346,7 +383,11 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
     const video = videoRef.current
     if (!video) return
     const prev = getPrevSelected(currentSegment)
-    if (prev === null) return
+    if (prev === null) {
+      const seg = videoData.segments[currentSegment]
+      if (seg) video.currentTime = seg.start + 0.01
+      return
+    }
     video.currentTime = videoData.segments[prev].start + 0.01
     setCurrentSegment(prev)
     if (!isPlaying) {
@@ -708,12 +749,12 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
       if (framesProcessed > 5) {
         const remaining = Math.max(0, (100 - ballDetectionProgress) / ballDetectionProgress * elapsed)
         const seconds = Math.ceil(remaining / 1000)
-        if (seconds < 60) return `~${seconds}s remaining (${framesProcessed} frames)`
+        if (seconds < 60) return `~${seconds}s remaining`
         const minutes = Math.floor(seconds / 60)
         const secs = seconds % 60
-        return `~${minutes}m ${secs}s remaining (${framesProcessed} frames)`
+        return `~${minutes}m ${secs}s remaining`
       }
-      return `${accumulatedDetectionsRef.current.length} frames processed`
+      return "Starting..."
     }
     const estimatedMs = Math.max(10000, (duration || 60) * 800)
     const remaining = Math.max(0, estimatedMs - elapsed)
@@ -730,12 +771,21 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
       <div className="mx-auto max-w-6xl px-6 md:px-10 lg:px-12 py-6 md:py-6 flex flex-col gap-6">
         <div className="flex items-center justify-between shrink-0">
           <h1 className="flex items-center gap-2 text-lg font-bold text-foreground">
-            <AppIcon className="h-5 w-5 shrink-0" />
+            <Icons.appIcon className="h-5 w-5 shrink-0" />
             Highlight AI
           </h1>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={rerunBallDetection}
+              disabled={isBallDetectionLoading}
+            >
+              <Icons.rotateCcw className="h-4 w-4" />
+              Rerun Detection
+            </Button>
             <Button variant="outline" size="sm" onClick={onReset}>
-              <RotateCcw className="h-4 w-4" />
+              <Icons.rotateCcw className="h-4 w-4" />
               New Video
             </Button>
             <Button
@@ -757,28 +807,12 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                   <span className="text-xs font-semibold">{exportProgress}%</span>
                 ) : (
                   <>
-                    <Download className="h-4 w-4" />
+                    <Icons.download className="h-4 w-4" />
                     Export
                   </>
                 )}
               </div>
             </Button>
-            {isBallDetectionLoading ? (
-              <Button variant="outline" size="sm" disabled className="gap-1.5">
-                <Spinner className="h-3.5 w-3.5" />
-                Ball
-              </Button>
-            ) : hasBallDetections ? (
-              <Button
-                variant={showBallTracking ? "default" : "outline"}
-                size="sm"
-                onClick={() => setShowBallTracking(!showBallTracking)}
-                title={showBallTracking ? "Hide ball tracking" : "Show ball tracking"}
-              >
-                {showBallTracking ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                Ball
-              </Button>
-            ) : null}
             <ThemeSwitcher />
           </div>
         </div>
@@ -788,7 +822,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
             <Spinner className="h-4 w-4 shrink-0 text-orange-500" />
             <div className="flex flex-1 items-center gap-3">
               <p className="text-sm text-foreground">
-                Analyzing ball tracking{accumulatedDetectionsRef.current.length > 0 ? ` (${accumulatedDetectionsRef.current.length} frames)` : ""}...
+                Analyzing ball tracking...
               </p>
               <p className="text-xs text-muted-foreground">{ballDetectionTimeRemaining()}</p>
             </div>
@@ -800,10 +834,10 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
 
         {showBallError && ballDetectionError && !isBallDetectionLoading && (
           <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
+            <Icons.alertTriangle className="h-4 w-4 shrink-0 text-destructive" />
             <p className="flex-1 text-sm text-destructive">{ballDetectionError}</p>
             <Button variant="ghost" size="icon-sm" onClick={() => setShowBallError(false)}>
-              <X className="h-3.5 w-3.5 text-destructive" />
+              <Icons.x className="h-3.5 w-3.5 text-destructive" />
             </Button>
           </div>
         )}
@@ -839,7 +873,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="icon-sm" onClick={toggleMute}>
-                  {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                  {isMuted || volume === 0 ? <Icons.volumeX className="h-4 w-4" /> : <Icons.volume2 className="h-4 w-4" />}
                 </Button>
                 <Slider
                   value={[isMuted ? 0 : volume]}
@@ -855,12 +889,11 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                   variant="outline"
                   size="icon"
                   onClick={playPreviousSegment}
-                  disabled={getPrevSelected(currentSegment) === null}
                 >
-                  <SkipBack className="h-5 w-5" />
+                  <Icons.skipBack className="h-5 w-5" />
                 </Button>
                 <Button size="icon-lg" onClick={togglePlay}>
-                  {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                  {isPlaying ? <Icons.pause className="h-6 w-6" /> : <Icons.play className="h-6 w-6" />}
                 </Button>
                 <Button
                   variant="outline"
@@ -868,7 +901,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                   onClick={playNextSegment}
                   disabled={getNextSelected(currentSegment) === null}
                 >
-                  <SkipForward className="h-5 w-5" />
+                  <Icons.skipForward className="h-5 w-5" />
                 </Button>
               </div>
 
@@ -944,7 +977,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                 className="absolute left-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
                 onClick={() => scrollTimeline("left")}
               >
-                <ChevronLeft className="h-5 w-5" />
+                <Icons.chevronLeft className="h-5 w-5" />
               </Button>
             )}
             {canScrollRight && (
@@ -954,7 +987,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                 className="absolute right-2 top-1/2 -translate-y-1/2 z-10 text-foreground"
                 onClick={() => scrollTimeline("right")}
               >
-                <ChevronRight className="h-5 w-5" />
+                <Icons.chevronRight className="h-5 w-5" />
               </Button>
             )}
             <div
@@ -1083,9 +1116,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, onB
                           style={{ left: `${(detection.time / duration) * 100}%` }}
                           title={`Made basket at ${detection.time.toFixed(1)}s (${(box.confidence * 100).toFixed(0)}%)`}
                         >
-                          <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-                            <path fill="#f97316" d="M248.37 41.094c-49.643 1.754-98.788 20.64-137.89 56.656L210.53 197.8c31.283-35.635 45.59-88.686 37.84-156.706zm18.126.107c7.646 71.205-7.793 129.56-43.223 169.345L256 243.27 401.52 97.75c-38.35-35.324-86.358-54.18-135.024-56.55zM97.75 110.48c-36.017 39.102-54.902 88.247-56.656 137.89 68.02 7.75 121.07-6.557 156.707-37.84L97.75 110.48zm316.5 0L268.73 256l32.71 32.71c33.815-30.112 81.05-45.78 138.183-45.11 10.088.118 20.49.753 31.176 1.9-2.37-48.665-21.227-96.672-56.55-135.02zM210.545 223.272c-39.785 35.43-98.14 50.87-169.344 43.223 2.37 48.666 21.226 96.675 56.55 135.025L243.27 256l-32.725-32.727zm225.002 38.27c-51.25.042-92.143 14.29-121.348 39.928l100.05 100.05c36.017-39.102 54.902-88.247 56.656-137.89-12.275-1.4-24.074-2.096-35.36-2.087zM256 268.73L110.48 414.25c38.35 35.324 86.358 54.18 135.024 56.55-7.646-71.205 7.793-129.56 43.223-169.345L256 268.73zm45.47 45.47c-31.283 35.635-45.59 88.686-37.84 156.706 49.643-1.754 98.788-20.64 137.89-56.656L301.47 314.2z" />
-                          </svg>
+                          <Icons.basketball className="w-full h-full" />
                         </div>
                       ))
                   )

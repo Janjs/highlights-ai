@@ -16,7 +16,7 @@ export async function POST() {
         const response = await undiciFetch(`${FLASK_API_URL}/balls/stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ frame_skip: 5 }),
+            body: JSON.stringify({ frame_skip: 2 }),
             dispatcher: agent,
         })
 

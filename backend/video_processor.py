@@ -65,6 +65,16 @@ def detect_scenes(video_path: str, threshold: float = 70.0, min_scene_len: int =
         scenes.append({"start": start_sec, "end": end_sec})
         logger.debug(f"  Scene {i + 1}: {start_sec:.2f}s - {end_sec:.2f}s")
 
+    if not scenes:
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        cap.release()
+        duration_sec = frame_count / fps if fps > 0 else 0
+        if duration_sec > 0:
+            scenes = [{"start": 0.0, "end": round(duration_sec, 2)}]
+            logger.info(f"No scene cuts detected, using single segment 0 - {duration_sec:.2f}s")
+
     return scenes
 
 
@@ -81,7 +91,7 @@ def _extract_predictions(results):
     return predictions
 
 
-def _extract_box(pred, confidence_threshold=0.3):
+def _extract_box(pred, confidence_threshold=0.5):
     if isinstance(pred, dict):
         conf = pred.get("confidence", 0)
         cx, cy = pred.get("x", 0), pred.get("y", 0)
@@ -91,7 +101,7 @@ def _extract_box(pred, confidence_threshold=0.3):
         conf = getattr(pred, 'confidence', 0)
         cx, cy = getattr(pred, 'x', 0), getattr(pred, 'y', 0)
         w, h = getattr(pred, 'width', 0), getattr(pred, 'height', 0)
-        cls = getattr(pred, 'class', 'Basketball')
+        cls = getattr(pred, 'class_name', None) or getattr(pred, 'class', "Basketball")
 
     if conf >= confidence_threshold:
         return {
@@ -102,7 +112,7 @@ def _extract_box(pred, confidence_threshold=0.3):
     return None
 
 
-def detect_balls(video_path: str, frame_skip: int = 5, confidence_threshold: float = 0.3) -> list:
+def detect_balls(video_path: str, frame_skip: int = 2, confidence_threshold: float = 0.1) -> list:
     from inference import get_model
 
     API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
@@ -276,7 +286,7 @@ def scenes_only():
 def balls_only():
     data = request.get_json()
     video_path = data.get('video_path')
-    frame_skip = data.get('frame_skip', 5)
+    frame_skip = data.get('frame_skip', 2)
 
     if not video_path or not os.path.exists(video_path):
         return jsonify({"error": "Invalid video_path"}), 400
@@ -292,8 +302,8 @@ def balls_only():
 @app.route('/balls/stream', methods=['POST'])
 def balls_stream():
     data = request.get_json() or {}
-    frame_skip = data.get('frame_skip', 5)
-    confidence_threshold = data.get('confidence_threshold', 0.3)
+    frame_skip = data.get('frame_skip', 2)
+    confidence_threshold = data.get('confidence_threshold', 0.5)
 
     video_path = data.get('video_path') or os.path.join(CACHE_DIR, 'input.mp4')
     cache_path = os.path.join(CACHE_DIR, 'ball_detections.json')
@@ -433,6 +443,17 @@ def export_video():
 
     logger.info(f"Export complete: {output_path}")
     return send_file(output_path, mimetype='video/mp4', as_attachment=True, download_name='highlight-export.mp4')
+
+
+@app.route('/balls/cache', methods=['DELETE'])
+def clear_ball_cache():
+    cache_path = os.path.join(CACHE_DIR, 'ball_detections.json')
+    try:
+        os.unlink(cache_path)
+        logger.info("Cleared ball detection cache")
+        return jsonify({"success": True})
+    except FileNotFoundError:
+        return jsonify({"success": True})
 
 
 @app.route('/cache', methods=['GET'])

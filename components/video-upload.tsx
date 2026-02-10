@@ -3,18 +3,18 @@
 import type React from "react"
 
 import { useState, useCallback, useEffect, useRef } from "react"
-import { Upload, Film, History, Check } from "lucide-react"
+import { Icons } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Progress } from "@/components/ui/progress"
 import { ThemeSwitcher } from "@/components/theme-switcher"
-import { AppIcon } from "@/components/app-icon"
 
 interface VideoUploadProps {
   onVideoProcessed: (data: {
     url: string
     segments: Array<{ start: number; end: number; url: string }>
-  }) => void
+  }, options?: { aiHighlighting: boolean }) => void
 }
 
 type ProcessingStage = "uploading" | "processing" | "done"
@@ -27,6 +27,8 @@ const STAGE_LABELS: Record<ProcessingStage, string> = {
 
 export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   const [isDragging, setIsDragging] = useState(false)
+  const [aiHighlighting, setAiHighlighting] = useState(true)
+  const aiHighlightingRef = useRef(true)
   const [isProcessing, setIsProcessing] = useState(false)
   const [stage, setStage] = useState<ProcessingStage>("uploading")
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -62,7 +64,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
           url: videoUrl,
         }))
 
-        onVideoProcessed({ url: videoUrl, segments })
+        onVideoProcessed({ url: videoUrl, segments }, { aiHighlighting: aiHighlightingRef.current })
       }
     } catch (error) {
       console.error("[CLIENT] Error loading cached video:", error)
@@ -199,7 +201,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
       await new Promise((resolve) => setTimeout(resolve, 400))
 
-      onVideoProcessed({ url: videoUrl, segments })
+      onVideoProcessed({ url: videoUrl, segments }, { aiHighlighting: aiHighlightingRef.current })
     } catch (error) {
       console.error("[CLIENT] Error processing video:", error)
       const errorMessage = error instanceof Error ? error.message : "Unknown error"
@@ -265,11 +267,11 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
         <div className="mb-8 text-center">
           <div className="mb-4 flex justify-center">
             <div className="rounded-full bg-primary/10 p-4">
-              <Film className="h-12 w-12 text-primary" />
+              <Icons.film className="h-12 w-12 text-primary" />
             </div>
           </div>
           <h1 className="mb-2 flex items-center justify-center gap-2 text-3xl font-bold text-foreground">
-            <AppIcon className="h-8 w-8 shrink-0" />
+            <Icons.appIcon className="h-8 w-8 shrink-0" />
             Highlight AI
           </h1>
           <p className="text-muted-foreground">Upload your video to automatically detect and split scenes</p>
@@ -290,7 +292,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
               className="absolute inset-0 cursor-pointer opacity-0"
               id="video-upload"
             />
-            <Upload className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+            <Icons.upload className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
             <p className="mb-2 text-lg font-medium text-foreground">Drop your video here</p>
             <p className="mb-4 text-sm text-muted-foreground">or click to browse</p>
             <Button asChild>
@@ -317,7 +319,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
                               : "bg-muted text-muted-foreground"
                         }`}
                       >
-                        {isCompleted ? <Check className="h-4 w-4" /> : i + 1}
+                        {isCompleted ? <Icons.check className="h-4 w-4" /> : i + 1}
                       </div>
                       <span
                         className={`text-xs ${
@@ -352,10 +354,25 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
           </div>
         )}
 
+        {!isProcessing && (
+          <label className="mt-4 flex items-center gap-2 cursor-pointer">
+            <Checkbox
+              checked={aiHighlighting}
+              onCheckedChange={(checked) => {
+                const value = checked === true
+                setAiHighlighting(value)
+                aiHighlightingRef.current = value
+              }}
+            />
+            <span className="text-sm text-foreground">AI Highlight Detection</span>
+            <span className="text-xs text-muted-foreground">(automatically select clips with made baskets)</span>
+          </label>
+        )}
+
         {hasCache && !isProcessing && (
           <div className="mt-4 flex justify-center">
             <Button variant="outline" onClick={loadCachedVideo}>
-              <History className="mr-2 h-4 w-4" />
+              <Icons.history className="mr-2 h-4 w-4" />
               Load Cached Video
             </Button>
           </div>

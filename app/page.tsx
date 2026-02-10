@@ -19,6 +19,7 @@ export default function Home() {
   } | null>(null)
   const [ballDetections, setBallDetections] = useState<BallDetection[] | undefined>(undefined)
   const [ballDetectionError, setBallDetectionError] = useState<string | null>(null)
+  const [aiHighlighting, setAiHighlighting] = useState(false)
   const [isLoadingCache, setIsLoadingCache] = useState(useCache)
 
   useEffect(() => {
@@ -87,12 +88,16 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-background">
       {!videoData ? (
-        <VideoUpload onVideoProcessed={setVideoData} />
+        <VideoUpload onVideoProcessed={(data, options) => {
+          setVideoData(data)
+          setAiHighlighting(options?.aiHighlighting ?? true)
+        }} />
       ) : (
         <VideoEditor
           videoData={videoData}
           ballDetections={ballDetections}
           ballDetectionError={ballDetectionError}
+          aiHighlighting={aiHighlighting}
           onBallDetectionsLoaded={handleBallDetectionsLoaded}
           onReset={handleReset}
         />
