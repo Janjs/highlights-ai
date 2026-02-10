@@ -238,10 +238,10 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       const basketCount = finalDetections.filter(d => d.boxes.some(b => b.class === "Made-Basket")).length
       setBallDetectionResult({ basketCount })
     } catch (error) {
-      console.error("[CLIENT] Ball detection failed:", error)
       if (abortController.signal.aborted) {
         onBallDetectionsLoaded([...accumulatedDetectionsRef.current])
       } else {
+        console.error("[CLIENT] Ball detection failed:", error)
         onBallDetectionsLoaded(accumulatedDetectionsRef.current, "Ball detection failed. Check the server logs.")
         setShowBallError(true)
       }
