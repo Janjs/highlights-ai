@@ -96,7 +96,7 @@ jobs:
           RESPONSE=$(curl --fail --silent --request GET "${{ secrets.COOLIFY_WEBHOOK_FLASK }}" \
             --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
 
-          DEPLOYMENT_UUID=$(echo "$RESPONSE" | jq -r '.deployment_uuid // empty')
+          DEPLOYMENT_UUID=$(echo "$RESPONSE" | jq -r '.deployments[0].deployment_uuid // .deployment_uuid // empty')
 
           if [ -z "$DEPLOYMENT_UUID" ]; then
             echo "::error::Failed to get deployment UUID"
@@ -145,7 +145,7 @@ jobs:
           RESPONSE=$(curl --fail --silent --request GET "${{ secrets.COOLIFY_WEBHOOK }}" \
             --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
 
-          DEPLOYMENT_UUID=$(echo "$RESPONSE" | jq -r '.deployment_uuid // empty')
+          DEPLOYMENT_UUID=$(echo "$RESPONSE" | jq -r '.deployments[0].deployment_uuid // .deployment_uuid // empty')
 
           if [ -z "$DEPLOYMENT_UUID" ]; then
             echo "::error::Failed to get deployment UUID"
