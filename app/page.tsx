@@ -196,7 +196,7 @@ function DemoVideo() {
           <div className="h-2.5 w-2.5 rounded-full bg-destructive/60" />
           <div className="h-2.5 w-2.5 rounded-full bg-primary/40" />
           <div className="h-2.5 w-2.5 rounded-full bg-green-500/40" />
-          <span className={`ml-3 text-xs text-muted-foreground ${fontTitle.className}`}>Highlight AI Editor</span>
+          <span className={`ml-3 text-xs text-muted-foreground ${fontTitle.className}`}>Highlights AI Editor</span>
         </div>
         <div ref={containerRef} className="relative cursor-pointer" onClick={togglePlay}>
           <video
@@ -267,7 +267,7 @@ const features = [
   {
     icon: Zap,
     title: "One-Click Export",
-    description: "Select your best clips and export a polished highlight reel in seconds, ready to share.",
+    description: "Select your best clips and export a polished highlights reel in seconds, ready to share.",
   },
 ]
 
@@ -292,7 +292,7 @@ export default function LandingPage() {
         <div className="relative mx-auto max-w-4xl text-center">
           <Link href="/" className={`mb-6 flex items-center justify-center gap-1 hover:opacity-80 transition-opacity ${fontTitle.className}`}>
             <Icons.appIcon className="h-7 w-7 text-primary" />
-            <span className="text-2xl font-semibold text-foreground">Highlight AI</span>
+            <span className="text-2xl font-semibold text-foreground">Highlights AI</span>
           </Link>
 
           <Badge variant="secondary" className="mb-6 gap-1.5 hover:opacity-90 transition-opacity" asChild>
@@ -314,7 +314,7 @@ export default function LandingPage() {
 
           <h1 className="mx-auto max-w-3xl font-serif text-5xl font-bold leading-tight tracking-tight text-foreground sm:text-6xl lg:text-7xl">
             Turn game footage into
-            <span className="text-primary"> highlight reels</span>
+            <span className="text-primary"> highlights reels</span>
           </h1>
 
           <p className="mx-auto mt-6 max-w-xl text-lg text-muted-foreground">

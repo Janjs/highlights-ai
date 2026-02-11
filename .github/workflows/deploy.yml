@@ -20,9 +20,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set image tag
+      - name: Set image tags
         run: |
-          echo "IMAGE_TAG=${{ env.REGISTRY }}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]'):latest" >> $GITHUB_ENV
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          REPO=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NEXT=${{ env.REGISTRY }}/${OWNER}/${REPO}:latest" >> $GITHUB_ENV
+          echo "IMAGE_FLASK=${{ env.REGISTRY }}/${OWNER}/${REPO}-flask:latest" >> $GITHUB_ENV
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -31,28 +34,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push Next.js image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.IMAGE_TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ env.IMAGE_NEXT }}
+          cache-from: type=gha,scope=nextjs
+          cache-to: type=gha,mode=max,scope=nextjs
+          build-args: |
+            FLASK_API_URL=${{ secrets.FLASK_API_URL }}
+
+      - name: Build and push Flask image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.flask
+          push: true
+          tags: ${{ env.IMAGE_FLASK }}
+          cache-from: type=gha,scope=flask
+          cache-to: type=gha,mode=max,scope=flask
           build-args: |
             ROBOFLOW_API_KEY=${{ secrets.ROBOFLOW_API_KEY }}
 
-      - name: Deploy to Coolify
+      - name: Deploy Next.js to Coolify
         run: |
           curl --request GET "${{ secrets.COOLIFY_WEBHOOK }}" \
+            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
+
+      - name: Deploy Flask to Coolify
+        run: |
+          curl --request GET "${{ secrets.COOLIFY_WEBHOOK_FLASK }}" \
             --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
 
       - name: Summary
         run: |
           echo "## Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "| Variable | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Image |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Next.js | ${{ env.IMAGE_NEXT }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Flask | ${{ env.IMAGE_FLASK }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY

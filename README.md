@@ -1,85 +1,73 @@
-# Video Editor with AI Scene Detection
+# 🏀 Highlights AI
 
-An intelligent video editor that automatically detects scene changes and splits videos into meaningful segments using AI-powered scene detection.
+**Basketball highlight reel maker that uses [Roboflow](https://roboflow.com) for basketball and made-basket detection, with scene-based editing so you can pick your best moments and export a clip.**
 
 ## Features
 
-- **Intelligent Scene Detection**: Automatically analyzes videos to detect scene changes using PySceneDetect's ContentDetector algorithm
-- **Visual Timeline Editor**: Interactive timeline with segment markers and playback controls
-- **Segment Navigation**: Jump between detected scenes with keyboard controls
-- **Modern UI**: Beautiful, responsive interface with dark/light mode support
-- **Drag & Drop Upload**: Easy video upload with drag-and-drop support
+- 🎬 **Scene detection** — Splits video into segments using PySceneDetect (ContentDetector)
+- 🏀 **Basketball & made-basket detection** — Roboflow-powered ball tracking and “Made-Basket” labels
+- ✂️ **Visual timeline editor** — Interactive timeline with segment markers and playback
+- ⏭️ **Segment navigation** — Jump between scenes and auto-select clips with made baskets
+- 🎨 **Modern UI** — Responsive interface with dark/light mode, drag & drop upload
 
-## How It Works
+## How it works
 
-The app uses PySceneDetect to intelligently identify scene boundaries in your videos:
+1. **Upload** — Drag and drop your basketball video.
+2. **Detect** — Scenes are split (ContentDetector); Roboflow detects basketball and made baskets per frame.
+3. **Edit** — Use the timeline to navigate, optionally auto-select segments that contain made baskets.
+4. **Export** — Pick segments and export your highlight reel.
 
-1. **Upload**: Drag and drop your video file into the app
-2. **Scene Detection**: The ContentDetector algorithm analyzes the video for significant changes in content (threshold: 70.0, minimum scene length: 15 frames)
-3. **Automatic Segmentation**: Detected scenes are automatically converted into navigable segments
-4. **Edit & Navigate**: Use the visual timeline to navigate between scenes, preview segments, and manage your video
+### Detection
 
-### Scene Detection Algorithm
-
-The app uses PySceneDetect's ContentDetector with the following parameters:
-- **Threshold**: 70.0 (detects moderate to high content changes)
-- **Minimum Scene Length**: 15 frames (prevents too-short segments)
-- **Downscale Factor**: 4x (optimizes processing speed while maintaining accuracy)
+- **Scenes**: PySceneDetect ContentDetector (threshold 70, min length 15 frames, 4× downscale).
+- **Ball & baskets**: Roboflow model (requires `ROBOFLOW_API_KEY`); classes include `Basketball` and `Made-Basket`.
 
 ## Setup
 
 ### Prerequisites
 
-1. **Node.js** (v18 or higher)
-2. **Python 3** with the following packages:
-   ```bash
-   pip install scenedetect opencv-python
-   ```
+- **Node.js** (v18+)
+- **Python 3** with: `pip install scenedetect opencv-python`
 
-### Installation
+### Install & run
 
 ```bash
-# Install dependencies
 pnpm install
-
-# Run development server
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to use the app.
+Open [http://localhost:3000](http://localhost:3000). The editor talks to a Flask backend for processing; see repo for backend setup.
 
 ### Environment variables
 
-Create a `.env` file in the project root with:
-
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `NEXT_PUBLIC_CACHE` | Enable client-side cache (`0` or `1`) | `0` |
-| `FLASK_API_URL` | URL of the Flask backend | `http://localhost:5001` |
-| `FLASK_PORT` | Port for the Flask backend | `5001` |
-| `ROBOFLOW_API_KEY` | Roboflow API key for ball detection ([get one](https://docs.roboflow.com/api-reference/authentication#retrieve-an-api-key)) | — |
+| `NEXT_PUBLIC_CACHE` | Client-side cache (`0` or `1`) | `0` |
+| `FLASK_API_URL` | Flask backend URL | `http://localhost:5001` |
+| `FLASK_PORT` | Flask port | `5001` |
+| `ROBOFLOW_API_KEY` | Roboflow API key for ball/basket detection ([get one](https://docs.roboflow.com/api-reference/authentication#retrieve-an-api-key)) | — |
 | `SKIP_DETECTION` | Skip ball detection (`0` or `1`) | `0` |
 
-## Technical Stack
+## Stack
 
-- **Framework**: Next.js 15 with React 19
-- **UI Components**: Radix UI with Tailwind CSS
-- **Scene Detection**: PySceneDetect + OpenCV
-- **Video Processing**: Server-side processing with Node.js child_process
+- **Frontend**: Next.js 15, React 19, Radix UI, Tailwind
+- **Scenes**: PySceneDetect + OpenCV
+- **Basketball & made baskets**: Roboflow
+- **Video processing**: Flask backend + Node child_process where used
 
-## Project Structure
+## Project structure
 
 ```
 ├── app/
-│   ├── api/process-video/    # API route for video processing
-│   └── page.tsx               # Main app page
+│   ├── api/process-video/
+│   └── page.tsx
 ├── components/
-│   ├── video-upload.tsx       # Upload interface
-│   └── video-editor.tsx       # Editor interface
-├── highlights-clipper.py      # Python scene detection script
-└── clips/                     # Generated video clips (git-ignored)
+│   ├── video-upload.tsx
+│   └── video-editor.tsx
+├── highlights-clipper.py
+└── clips/                 # generated clips (git-ignored)
 ```
 
-## Supported Formats
+## Supported formats
 
-MP4, MOV, AVI, WebM, and other common video formats supported by the browser and OpenCV.
+MP4, MOV, AVI, WebM, and other formats supported by the browser and OpenCV.
