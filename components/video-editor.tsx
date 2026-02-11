@@ -108,8 +108,14 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     }, 300)
   }, [duration])
 
+  const isDemoVideo = videoData.url === "/demo.mp4" || videoData.segments[0]?.url === "/demo.mp4"
+
   const startBallDetection = useCallback(async (force = false) => {
     if (!force && (!aiHighlighting || hasBallDetections || ballDetectionAttemptedRef.current)) return
+    if (isDemoVideo) {
+      onBallDetectionsLoaded([], "Upload a video to use AI basket detection.")
+      return
+    }
     ballDetectionAttemptedRef.current = true
 
     if (force) {
@@ -274,7 +280,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       setIsBallDetectionLoading(false)
       setBallDetectionProgress(0)
     }
-  }, [aiHighlighting, hasBallDetections, onBallDetectionsLoaded, startEstimatedProgress])
+  }, [aiHighlighting, hasBallDetections, isDemoVideo, onBallDetectionsLoaded, startEstimatedProgress])
 
   const rerunBallDetection = useCallback(() => {
     if (isBallDetectionLoading) return
@@ -936,17 +942,19 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
             <span className="hidden sm:inline text-xl font-bold text-foreground">Highlight AI</span>
           </Link>
           <div className="flex items-center gap-1 sm:gap-2 min-w-0">
-            <Button
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              onClick={rerunBallDetection}
-              disabled={isBallDetectionLoading}
-              title={hasBallDetections ? "Rerun Detection" : "Run Detection"}
-            >
-              <Icons.basketball className="h-4 w-4 text-primary-background" />
-              {hasBallDetections ? "Rerun Detection" : "Run Detection"}
-            </Button>
+            {!isDemoVideo && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={rerunBallDetection}
+                disabled={isBallDetectionLoading}
+                title={hasBallDetections ? "Re-run Detection" : "Run Detection"}
+              >
+                <Icons.basketball className="h-4 w-4 text-primary-background" />
+                {hasBallDetections ? "Re-run Detection" : "Run Detection"}
+              </Button>
+            )}
             <Tooltip
               open={showNewVideoHint ? true : undefined}
               onOpenChange={(open) => {

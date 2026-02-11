@@ -43,6 +43,7 @@ Open [http://localhost:3000](http://localhost:3000). The editor talks to a Flask
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NEXT_PUBLIC_CACHE` | Client-side cache (`0` or `1`) | `0` |
+| `CACHE_ENABLED` | Backend (Flask) cache: persist video/scenes/detections (`0` or `1`). Set to `0` with `NEXT_PUBLIC_CACHE=0` for no storage | `1` |
 | `FLASK_API_URL` | Flask backend URL | `http://localhost:5001` |
 | `FLASK_PORT` | Flask port | `5001` |
 | `ROBOFLOW_API_KEY` | Roboflow API key for ball/basket detection ([get one](https://docs.roboflow.com/api-reference/authentication#retrieve-an-api-key)) | — |

@@ -1,5 +1,5 @@
 scenedetect[opencv]>=0.6
-inference
+requests
 flask
 flask-cors
 gunicorn

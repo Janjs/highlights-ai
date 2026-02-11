@@ -4,14 +4,30 @@ import time
 import logging
 import subprocess
 import shutil
+import base64
 from logging.handlers import RotatingFileHandler
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
 import cv2
+import requests
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(os.path.join(CACHE_DIR, 'exports'), exist_ok=True)
+
+
+def _cache_enabled() -> bool:
+    v = os.getenv("CACHE_ENABLED", "1").lower()
+    return v in ("1", "true", "yes")
+
+
+def _clear_cache_files():
+    for name in ["input.mp4", "input_original.mp4", "scenes.json", "ball_detections.json"]:
+        path = os.path.join(CACHE_DIR, name)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('video-processor')
@@ -42,20 +58,18 @@ CORS(app)
 
 
 def detect_scenes(video_path: str, threshold: float = 70.0, min_scene_len: int = 15) -> list:
-    from scenedetect import VideoManager, SceneManager
+    from scenedetect import open_video, SceneManager
     from scenedetect.detectors import ContentDetector
 
     logger.info(f"Starting scene detection for: {video_path}")
     start_time = time.time()
 
-    video_manager = VideoManager([video_path])
+    video = open_video(video_path)
     scene_manager = SceneManager()
+    scene_manager.downscale = 4
     scene_manager.add_detector(ContentDetector(threshold=threshold, min_scene_len=min_scene_len))
-    video_manager.set_downscale_factor(4)
-    video_manager.start()
-    scene_manager.detect_scenes(frame_source=video_manager)
-
-    scene_list = scene_manager.get_scene_list()
+    scene_manager.detect_scenes(video=video)
+    scene_list = scene_manager.get_scene_list(start_in_scene=True)
     logger.info(f"Detected {len(scene_list)} scenes in {time.time() - start_time:.2f}s")
 
     scenes = []
@@ -112,19 +126,26 @@ def _extract_box(pred, confidence_threshold=0.5):
     return None
 
 
-def detect_balls(video_path: str, frame_skip: int = 2, confidence_threshold: float = 0.1) -> list:
-    from inference import get_model
+ROBOFLOW_MODEL_ID = "made-baskets-gswke/1"
+ROBOFLOW_HOSTED_URL = "https://detect.roboflow.com"
 
+
+def _infer_frame_api(frame, api_key: str, model_id: str, confidence: float = 0.5, overlap: float = 0.5):
+    _, buf = cv2.imencode(".jpg", frame)
+    b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+    url = f"{ROBOFLOW_HOSTED_URL}/{model_id}"
+    params = {"api_key": api_key, "confidence": confidence, "overlap": overlap}
+    r = requests.post(url, params=params, data=b64, headers={"Content-Type": "application/json"}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def detect_balls(video_path: str, frame_skip: int = 2, confidence_threshold: float = 0.25) -> list:
     API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
-    MODEL_ID = "made-baskets-gswke/1"
-
     if not API_KEY:
         raise ValueError("ROBOFLOW_API_KEY is required")
 
-    os.environ["ROBOFLOW_API_KEY"] = API_KEY
-
-    logger.info(f"Starting ball detection for: {video_path}")
-    model = get_model(model_id=MODEL_ID)
+    logger.info(f"Starting ball detection for: {video_path} (Roboflow hosted API)")
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -145,7 +166,7 @@ def detect_balls(video_path: str, frame_skip: int = 2, confidence_threshold: flo
             frame_detections = []
 
             try:
-                results = model.infer(frame)
+                results = _infer_frame_api(frame, API_KEY, ROBOFLOW_MODEL_ID, confidence=confidence_threshold)
                 for pred in _extract_predictions(results):
                     box = _extract_box(pred, confidence_threshold)
                     if box:
@@ -191,6 +212,9 @@ def upload_video():
 
     logger.info(f"Received video upload: {video.filename}")
 
+    if not _cache_enabled():
+        _clear_cache_files()
+
     original_path = os.path.join(CACHE_DIR, 'input_original.mp4')
     compressed_path = os.path.join(CACHE_DIR, 'input.mp4')
     scenes_path = os.path.join(CACHE_DIR, 'scenes.json')
@@ -220,8 +244,9 @@ def upload_video():
 
     try:
         scenes = detect_scenes(compressed_path)
-        with open(scenes_path, 'w') as f:
-            json.dump(scenes, f)
+        if _cache_enabled():
+            with open(scenes_path, 'w') as f:
+                json.dump(scenes, f)
         return jsonify({"scenes": scenes})
     except Exception as e:
         logger.exception(f"Scene detection failed: {e}")
@@ -303,7 +328,7 @@ def balls_only():
 def balls_stream():
     data = request.get_json() or {}
     frame_skip = data.get('frame_skip', 2)
-    confidence_threshold = data.get('confidence_threshold', 0.1)
+    confidence_threshold = data.get('confidence_threshold', 0.25)
 
     video_path = data.get('video_path') or os.path.join(CACHE_DIR, 'input.mp4')
     cache_path = os.path.join(CACHE_DIR, 'ball_detections.json')
@@ -312,7 +337,7 @@ def balls_stream():
         return jsonify({"error": "No video found. Upload a video first."}), 400
 
     def generate():
-        if os.path.exists(cache_path):
+        if _cache_enabled() and os.path.exists(cache_path):
             try:
                 with open(cache_path) as f:
                     cached = json.load(f)
@@ -325,21 +350,9 @@ def balls_stream():
             except Exception:
                 pass
 
-        from inference import get_model
-
         API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
-        MODEL_ID = "made-baskets-gswke/1"
-
         if not API_KEY:
             yield json.dumps({"type": "error", "message": "ROBOFLOW_API_KEY is required. Get one at https://docs.roboflow.com/api-reference/authentication#retrieve-an-api-key"}) + "\n"
-            return
-
-        os.environ["ROBOFLOW_API_KEY"] = API_KEY
-
-        try:
-            model = get_model(model_id=MODEL_ID)
-        except Exception as e:
-            yield json.dumps({"type": "error", "message": f"Failed to load model: {e}"}) + "\n"
             return
 
         cap = cv2.VideoCapture(video_path)
@@ -364,7 +377,7 @@ def balls_stream():
                 frame_detections = []
 
                 try:
-                    results = model.infer(frame)
+                    results = _infer_frame_api(frame, API_KEY, ROBOFLOW_MODEL_ID, confidence=confidence_threshold)
                     for pred in _extract_predictions(results):
                         box = _extract_box(pred, confidence_threshold)
                         if box:
@@ -381,12 +394,13 @@ def balls_stream():
 
         cap.release()
 
-        try:
-            with open(cache_path, 'w') as f:
-                json.dump(all_detections, f)
-            logger.info(f"Saved {len(all_detections)} ball detections to cache")
-        except Exception as e:
-            logger.warning(f"Failed to cache ball detections: {e}")
+        if _cache_enabled():
+            try:
+                with open(cache_path, 'w') as f:
+                    json.dump(all_detections, f)
+                logger.info(f"Saved {len(all_detections)} ball detections to cache")
+            except Exception as e:
+                logger.warning(f"Failed to cache ball detections: {e}")
 
         elapsed = time.time() - start_time
         logger.info(f"Streaming ball detection complete in {elapsed:.2f}s ({processed_count} frames)")
@@ -458,6 +472,9 @@ def clear_ball_cache():
 
 @app.route('/cache', methods=['GET'])
 def check_cache():
+    if not _cache_enabled():
+        return jsonify({"exists": False})
+
     video_path = os.path.join(CACHE_DIR, 'input.mp4')
     scenes_path = os.path.join(CACHE_DIR, 'scenes.json')
     ball_detections_path = os.path.join(CACHE_DIR, 'ball_detections.json')
