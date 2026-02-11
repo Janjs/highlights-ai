@@ -48,6 +48,18 @@ pnpm dev
 
 Open [http://localhost:3000](http://localhost:3000) to use the app.
 
+### Environment variables
+
+Create a `.env` file in the project root with:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NEXT_PUBLIC_CACHE` | Enable client-side cache (`0` or `1`) | `0` |
+| `FLASK_API_URL` | URL of the Flask backend | `http://localhost:5001` |
+| `FLASK_PORT` | Port for the Flask backend | `5001` |
+| `ROBOFLOW_API_KEY` | Roboflow API key for ball detection ([get one](https://docs.roboflow.com/api-reference/authentication#retrieve-an-api-key)) | — |
+| `SKIP_DETECTION` | Skip ball detection (`0` or `1`) | `0` |
+
 ## Technical Stack
 
 - **Framework**: Next.js 15 with React 19

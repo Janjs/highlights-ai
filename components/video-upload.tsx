@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Progress } from "@/components/ui/progress"
 import { ThemeSwitcher } from "@/components/theme-switcher"
+import { fontTitle } from "@/lib/fonts"
 
 interface VideoUploadProps {
   onVideoProcessed: (data: {
@@ -26,6 +27,8 @@ const STAGE_LABELS: Record<ProcessingStage, string> = {
   done: "Done!",
 }
 
+const MAX_VIDEO_DURATION_SEC = 120
+
 export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [aiHighlighting, setAiHighlighting] = useState(true)
@@ -35,6 +38,7 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [estimatedProgress, setEstimatedProgress] = useState(0)
   const [hasCache, setHasCache] = useState(false)
+  const [videoTooLong, setVideoTooLong] = useState(false)
   const estimateTimerRef = useRef<ReturnType<typeof setInterval>>(null)
   const estimateStartRef = useRef(0)
   const estimatedDurationRef = useRef(0)
@@ -135,14 +139,20 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
     console.log("[CLIENT] Starting video processing...")
     console.log(`[CLIENT] File: ${file.name}, Size: ${file.size}, Type: ${file.type}`)
 
+    const videoDuration = await getVideoDuration(file)
+    console.log(`[CLIENT] Video duration: ${videoDuration.toFixed(1)}s`)
+    if (videoDuration > MAX_VIDEO_DURATION_SEC) {
+      setVideoTooLong(true)
+      return
+    }
+    setVideoTooLong(false)
+
     setIsProcessing(true)
     setStage("uploading")
     setUploadProgress(0)
     setEstimatedProgress(0)
 
     try {
-      const videoDuration = await getVideoDuration(file)
-      console.log(`[CLIENT] Video duration: ${videoDuration.toFixed(1)}s`)
 
       const formData = new FormData()
       formData.append("video", file, file.name)
@@ -266,12 +276,22 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
       <Card className="w-full max-w-2xl p-8">
         <div className="mb-8 text-center">
-          <Link href="/" className="mb-2 inline-flex items-center gap-2 text-3xl font-bold text-foreground hover:opacity-80 transition-opacity">
+          <Link href="/" className={`mb-2 inline-flex items-center gap-2 text-3xl font-bold text-foreground hover:opacity-80 transition-opacity ${fontTitle.className}`}>
             <Icons.appIcon className="h-8 w-8 text-primary" />
             Highlight AI
           </Link>
           <p className="text-muted-foreground">Upload your video to automatically detect and split scenes</p>
         </div>
+
+        <div className="mb-6 rounded-lg border border-border bg-muted/30 px-4 py-3 text-center text-sm text-muted-foreground">
+          Videos up to 2 minutes. Longer videos coming soon.
+        </div>
+
+        {videoTooLong && (
+          <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-center text-sm text-destructive">
+            This video is over 2 minutes. Longer videos coming soon.
+          </div>
+        )}
 
         {!isProcessing ? (
           <div

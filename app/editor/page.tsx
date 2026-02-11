@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { VideoUpload } from "@/components/video-upload"
 import { VideoEditor } from "@/components/video-editor"
 
@@ -14,6 +14,7 @@ const DEMO_VIDEO_URL = "/demo.mp4"
 
 export default function EditorPage() {
   const useCache = process.env.NEXT_PUBLIC_CACHE === "1" || process.env.NEXT_PUBLIC_CACHE === "true"
+  const hasLoadedInitialDemo = useRef(false)
 
   const [videoData, setVideoData] = useState<{
     url: string
@@ -87,10 +88,11 @@ export default function EditorPage() {
   }, [useCache, loadDemoVideo])
 
   useEffect(() => {
-    if (!useCache && !videoData) {
+    if (!useCache && !hasLoadedInitialDemo.current) {
+      hasLoadedInitialDemo.current = true
       loadDemoVideo()
     }
-  }, [useCache, videoData, loadDemoVideo])
+  }, [useCache, loadDemoVideo])
 
   const handleBallDetectionsLoaded = useCallback(
     (detections: BallDetection[], error?: string | null) => {

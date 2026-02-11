@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ThemeSwitcher } from "@/components/theme-switcher"
+import { fontTitle } from "@/lib/fonts"
 import { Film, Zap, Target, ArrowRight, Play, ChevronDown } from "lucide-react"
 
 interface BallDetection {
@@ -195,7 +196,7 @@ function DemoVideo() {
           <div className="h-2.5 w-2.5 rounded-full bg-destructive/60" />
           <div className="h-2.5 w-2.5 rounded-full bg-primary/40" />
           <div className="h-2.5 w-2.5 rounded-full bg-green-500/40" />
-          <span className="ml-3 text-xs text-muted-foreground">Highlight AI Editor</span>
+          <span className={`ml-3 text-xs text-muted-foreground ${fontTitle.className}`}>Highlight AI Editor</span>
         </div>
         <div ref={containerRef} className="relative cursor-pointer" onClick={togglePlay}>
           <video
@@ -289,14 +290,26 @@ export default function LandingPage() {
         </div>
 
         <div className="relative mx-auto max-w-4xl text-center">
-          <Link href="/" className="mb-6 flex items-center justify-center gap-1 hover:opacity-80 transition-opacity">
+          <Link href="/" className={`mb-6 flex items-center justify-center gap-1 hover:opacity-80 transition-opacity ${fontTitle.className}`}>
             <Icons.appIcon className="h-7 w-7 text-primary" />
             <span className="text-2xl font-semibold text-foreground">Highlight AI</span>
           </Link>
 
-          <Badge variant="secondary" className="mb-6">
-            <Icons.aiSpark className="h-3.5 w-3.5 text-primary" />
-            Powered by computer vision
+          <Badge variant="secondary" className="mb-6 gap-1.5 hover:opacity-90 transition-opacity" asChild>
+            <a
+              href="https://roboflow.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex flex-row items-center"
+              style={{ lineHeight: '1', minHeight: '1.5rem' }}
+            >
+              <span className="text-muted-foreground flex items-center" style={{ height: '1.5rem' }}>
+                Powered by
+              </span>
+              <span className="flex items-center h-2.5 w-auto" style={{ alignItems: 'flex-start', marginTop: '-1px' }}>
+                <Icons.roboflow className="h-2.5 w-auto text-muted-foreground" />
+              </span>
+            </a>
           </Badge>
 
           <h1 className="mx-auto max-w-3xl font-serif text-5xl font-bold leading-tight tracking-tight text-foreground sm:text-6xl lg:text-7xl">
@@ -365,16 +378,13 @@ export default function LandingPage() {
             </h2>
           </div>
 
-          <div className="flex flex-col gap-8 sm:flex-row sm:gap-0">
-            {steps.map((step, i) => (
-              <div key={step.number} className="flex flex-1 items-start gap-4 sm:flex-col sm:items-center sm:text-center">
+          <div className="grid grid-cols-1 gap-10 sm:grid-cols-3 sm:gap-6">
+            {steps.map((step) => (
+              <div key={step.number} className="flex flex-col items-center text-center">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-bold text-primary-foreground">
                   {step.number}
                 </div>
-                {i < steps.length - 1 && (
-                  <div className="hidden h-px flex-1 self-center bg-border sm:block sm:mx-4" />
-                )}
-                <div className="sm:mt-4">
+                <div className="mt-4 flex min-h-[4.5rem] w-full flex-col justify-center px-2">
                   <h3 className="font-semibold text-foreground">{step.title}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">{step.description}</p>
                 </div>
@@ -386,7 +396,6 @@ export default function LandingPage() {
 
       <section className="px-6 py-24">
         <div className="mx-auto max-w-2xl text-center">
-          <Icons.basketball className="mx-auto mb-6 h-12 w-12" />
           <h2 className="font-serif text-3xl font-bold text-foreground sm:text-4xl">
             Ready to make your highlight reel?
           </h2>
@@ -404,7 +413,7 @@ export default function LandingPage() {
 
       <footer className="border-t px-6 py-8">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm text-muted-foreground hover:opacity-80 transition-opacity">
+          <Link href="/" className={`flex items-center gap-2 text-sm text-muted-foreground hover:opacity-80 transition-opacity ${fontTitle.className}`}>
             <Icons.appIcon className="h-4 w-4 text-primary" />
             Highlight AI
           </Link>

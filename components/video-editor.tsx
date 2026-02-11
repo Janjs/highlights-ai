@@ -12,7 +12,9 @@ import { Kbd } from "@/components/ui/kbd"
 import { Progress } from "@/components/ui/progress"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ThemeSwitcher } from "@/components/theme-switcher"
+import { fontTitle } from "@/lib/fonts"
 
 interface BallDetection {
   time: number
@@ -74,6 +76,22 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   const isStreamingRef = useRef(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const madeBasketLabelsRef = useRef<Map<number, { firstSeen: number, box: { x: number, y: number, w: number, h: number } }>>(new Map())
+
+  const NEW_VIDEO_HINT_KEY = "highlight-ai-new-video-hint-shown"
+  const [showNewVideoHint, setShowNewVideoHint] = useState(false)
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const shown = window.localStorage.getItem(NEW_VIDEO_HINT_KEY)
+    if (!shown) setShowNewVideoHint(true)
+  }, [])
+  useEffect(() => {
+    if (!showNewVideoHint) return
+    const t = setTimeout(() => {
+      setShowNewVideoHint(false)
+      if (typeof window !== "undefined") window.localStorage.setItem(NEW_VIDEO_HINT_KEY, "1")
+    }, 5000)
+    return () => clearTimeout(t)
+  }, [showNewVideoHint])
 
   const hasBallDetections = ballDetections && ballDetections.length > 0
 
@@ -912,50 +930,83 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-6 md:px-10 lg:px-12 py-6 md:py-6 flex flex-col gap-6">
-        <div className="flex items-center justify-between shrink-0">
-          <Link href="/" className="text-xl font-bold text-foreground hover:opacity-80 transition-opacity">
-            Highlight AI
+        <div className="flex items-center justify-between shrink-0 gap-2">
+          <Link href="/" className={`flex items-center gap-1 shrink-0 text-foreground hover:opacity-80 transition-opacity ${fontTitle.className}`} aria-label="Highlight AI">
+            <Icons.appIcon className="h-6 w-6 text-primary" />
+            <span className="hidden sm:inline text-xl font-bold text-foreground">Highlight AI</span>
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 min-w-0">
             <Button
               variant="outline"
               size="sm"
+              className="shrink-0"
               onClick={rerunBallDetection}
               disabled={isBallDetectionLoading}
               title={hasBallDetections ? "Rerun Detection" : "Run Detection"}
             >
-              <Icons.aiSpark className="h-4 w-4" />
+              <Icons.basketball className="h-4 w-4 text-primary-background" />
               {hasBallDetections ? "Rerun Detection" : "Run Detection"}
             </Button>
-            <Button variant="outline" size="sm" onClick={onReset}>
-              <Icons.rotateCcw className="h-4 w-4" />
-              New Video
-            </Button>
-            <Button
-              size="sm"
-              variant={isExporting ? "secondary" : "default"}
-              onClick={handleExport}
-              disabled={selectedSegments.size === 0}
-              className={`relative overflow-hidden w-[100px] ${isExporting ? "pointer-events-none" : ""}`}
+            <Tooltip
+              open={showNewVideoHint ? true : undefined}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setShowNewVideoHint(false)
+                  if (typeof window !== "undefined") window.localStorage.setItem(NEW_VIDEO_HINT_KEY, "1")
+                }
+              }}
             >
-              <div
-                className="absolute inset-0 bg-primary transition-all duration-300 ease-in-out"
-                style={{
-                  width: `${exportProgress}%`,
-                  opacity: isExporting ? 1 : 0
-                }}
-              />
-              <div className="relative flex items-center justify-center gap-2 z-10 w-full">
-                {isExporting ? (
-                  <span className="text-xs font-semibold">{exportProgress}%</span>
-                ) : (
-                  <>
-                    <Icons.download className="h-4 w-4" />
-                    Export
-                  </>
-                )}
-              </div>
-            </Button>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  className="shrink-0 sm:h-auto sm:w-auto sm:min-w-0 sm:px-3 sm:py-2"
+                  onClick={() => {
+                    if (showNewVideoHint && typeof window !== "undefined") {
+                      window.localStorage.setItem(NEW_VIDEO_HINT_KEY, "1")
+                      setShowNewVideoHint(false)
+                    }
+                    onReset()
+                  }}
+                >
+                  <Icons.rotateCcw className="h-4 w-4" />
+                  <span className="hidden sm:inline">New Video</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {showNewVideoHint ? "try with your own video" : "New Video"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant={isExporting ? "secondary" : "default"}
+                  onClick={handleExport}
+                  disabled={selectedSegments.size === 0}
+                  className={`relative overflow-hidden shrink-0 sm:h-auto sm:w-auto sm:min-w-[100px] sm:px-3 sm:py-2 ${isExporting ? "pointer-events-none" : ""}`}
+                >
+                  <div
+                    className="absolute inset-0 bg-primary transition-all duration-300 ease-in-out"
+                    style={{
+                      width: `${exportProgress}%`,
+                      opacity: isExporting ? 1 : 0
+                    }}
+                  />
+                  <div className="relative flex items-center justify-center gap-2 z-10 w-full">
+                    {isExporting ? (
+                      <span className="text-xs font-semibold min-w-[2.5rem] sm:min-w-0">{exportProgress}%</span>
+                    ) : (
+                      <>
+                        <Icons.download className="h-4 w-4 shrink-0" />
+                        <span className="hidden sm:inline">Export</span>
+                      </>
+                    )}
+                  </div>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Export</TooltipContent>
+            </Tooltip>
             <ThemeSwitcher />
           </div>
         </div>
@@ -1290,7 +1341,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
                           style={{ left: `${(detection.time / duration) * 100}%` }}
                           title={`Made basket at ${detection.time.toFixed(1)}s (${(box.confidence * 100).toFixed(0)}%)`}
                         >
-                          <Icons.basketball className="w-full h-full" />
+                          <Icons.basketball className="w-full h-full text-primary" />
                         </div>
                       ))
                   )

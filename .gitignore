@@ -9,6 +9,15 @@
 *.mpeg
 *.mpg
 *.m4v
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.webp
+*.bmp
+*.tiff
 
 # video processing
 /clips/
