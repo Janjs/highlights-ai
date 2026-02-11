@@ -52,7 +52,7 @@ jobs:
           cache-from: type=gha,scope=nextjs
           cache-to: type=gha,mode=max,scope=nextjs
           build-args: |
-            FLASK_API_URL=${{ secrets.FLASK_API_URL }}
+            FLASK_API_URL=${{ vars.FLASK_API_URL }}
 
   build-flask:
     needs: prepare
