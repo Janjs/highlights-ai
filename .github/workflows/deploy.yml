@@ -108,12 +108,22 @@ jobs:
 
           COOLIFY_BASE=$(echo "${{ secrets.COOLIFY_WEBHOOK_FLASK }}" | sed 's|/api/v1/deploy.*||')
 
+          echo "Coolify base: ${COOLIFY_BASE}"
+          echo "Polling: ${COOLIFY_BASE}/api/v1/deployments/${DEPLOYMENT_UUID}"
+
           for i in $(seq 1 60); do
-            STATUS_RESPONSE=$(curl --fail --silent \
+            HTTP_CODE=$(curl --silent --output /tmp/deploy_response.json --write-out "%{http_code}" \
               "${COOLIFY_BASE}/api/v1/deployments/${DEPLOYMENT_UUID}" \
               --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
 
-            STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // empty')
+            if [ "$HTTP_CODE" -ne 200 ]; then
+              echo "::warning::API returned HTTP $HTTP_CODE (attempt $i/60)"
+              cat /tmp/deploy_response.json 2>/dev/null || true
+              sleep 10
+              continue
+            fi
+
+            STATUS=$(jq -r '.status // empty' /tmp/deploy_response.json)
 
             case "$STATUS" in
               "finished")
@@ -122,7 +132,7 @@ jobs:
                 ;;
               "failed"|"cancelled")
                 echo "::error::Flask deployment ${STATUS}"
-                echo "$STATUS_RESPONSE" | jq .
+                jq . /tmp/deploy_response.json
                 exit 1
                 ;;
               *)
@@ -157,12 +167,22 @@ jobs:
 
           COOLIFY_BASE=$(echo "${{ secrets.COOLIFY_WEBHOOK }}" | sed 's|/api/v1/deploy.*||')
 
+          echo "Coolify base: ${COOLIFY_BASE}"
+          echo "Polling: ${COOLIFY_BASE}/api/v1/deployments/${DEPLOYMENT_UUID}"
+
           for i in $(seq 1 60); do
-            STATUS_RESPONSE=$(curl --fail --silent \
+            HTTP_CODE=$(curl --silent --output /tmp/deploy_response.json --write-out "%{http_code}" \
               "${COOLIFY_BASE}/api/v1/deployments/${DEPLOYMENT_UUID}" \
               --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
 
-            STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // empty')
+            if [ "$HTTP_CODE" -ne 200 ]; then
+              echo "::warning::API returned HTTP $HTTP_CODE (attempt $i/60)"
+              cat /tmp/deploy_response.json 2>/dev/null || true
+              sleep 10
+              continue
+            fi
+
+            STATUS=$(jq -r '.status // empty' /tmp/deploy_response.json)
 
             case "$STATUS" in
               "finished")
@@ -171,7 +191,7 @@ jobs:
                 ;;
               "failed"|"cancelled")
                 echo "::error::Next.js deployment ${STATUS}"
-                echo "$STATUS_RESPONSE" | jq .
+                jq . /tmp/deploy_response.json
                 exit 1
                 ;;
               *)
