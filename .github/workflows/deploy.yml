@@ -8,7 +8,22 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-and-deploy:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image_next: ${{ steps.tags.outputs.image_next }}
+      image_flask: ${{ steps.tags.outputs.image_flask }}
+    steps:
+      - name: Set image tags
+        id: tags
+        run: |
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          REPO=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')
+          echo "image_next=${{ env.REGISTRY }}/${OWNER}/${REPO}:latest" >> $GITHUB_OUTPUT
+          echo "image_flask=${{ env.REGISTRY }}/${OWNER}/${REPO}-flask:latest" >> $GITHUB_OUTPUT
+
+  build-nextjs:
+    needs: prepare
     runs-on: ubuntu-latest
     environment: Production
     permissions:
@@ -20,12 +35,37 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set image tags
-        run: |
-          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
-          REPO=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NEXT=${{ env.REGISTRY }}/${OWNER}/${REPO}:latest" >> $GITHUB_ENV
-          echo "IMAGE_FLASK=${{ env.REGISTRY }}/${OWNER}/${REPO}-flask:latest" >> $GITHUB_ENV
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ needs.prepare.outputs.image_next }}
+          cache-from: type=gha,scope=nextjs
+          cache-to: type=gha,mode=max,scope=nextjs
+          build-args: |
+            FLASK_API_URL=${{ secrets.FLASK_API_URL }}
+
+  build-flask:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: Production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -34,46 +74,127 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Next.js image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_NEXT }}
-          cache-from: type=gha,scope=nextjs
-          cache-to: type=gha,mode=max,scope=nextjs
-          build-args: |
-            FLASK_API_URL=${{ secrets.FLASK_API_URL }}
-
-      - name: Build and push Flask image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile.flask
           push: true
-          tags: ${{ env.IMAGE_FLASK }}
+          tags: ${{ needs.prepare.outputs.image_flask }}
           cache-from: type=gha,scope=flask
           cache-to: type=gha,mode=max,scope=flask
           build-args: |
             ROBOFLOW_API_KEY=${{ secrets.ROBOFLOW_API_KEY }}
 
-      - name: Deploy Next.js to Coolify
+  deploy-flask:
+    needs: build-flask
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Deploy and wait
         run: |
-          curl --request GET "${{ secrets.COOLIFY_WEBHOOK }}" \
-            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
+          RESPONSE=$(curl --fail --silent --request GET "${{ secrets.COOLIFY_WEBHOOK_FLASK }}" \
+            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
 
-      - name: Deploy Flask to Coolify
+          DEPLOYMENT_UUID=$(echo "$RESPONSE" | jq -r '.deployment_uuid // empty')
+
+          if [ -z "$DEPLOYMENT_UUID" ]; then
+            echo "::error::Failed to get deployment UUID"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+          echo "Deployment UUID: $DEPLOYMENT_UUID"
+
+          COOLIFY_BASE=$(echo "${{ secrets.COOLIFY_WEBHOOK_FLASK }}" | sed 's|/api/v1/deploy.*||')
+
+          for i in $(seq 1 60); do
+            STATUS_RESPONSE=$(curl --fail --silent \
+              "${COOLIFY_BASE}/api/v1/deployments/${DEPLOYMENT_UUID}" \
+              --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
+
+            STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // empty')
+
+            case "$STATUS" in
+              "finished")
+                echo "Flask deployment succeeded"
+                exit 0
+                ;;
+              "failed"|"cancelled")
+                echo "::error::Flask deployment ${STATUS}"
+                echo "$STATUS_RESPONSE" | jq .
+                exit 1
+                ;;
+              *)
+                echo "Status: ${STATUS:-unknown} (attempt $i/60)"
+                sleep 10
+                ;;
+            esac
+          done
+
+          echo "::error::Flask deployment timed out"
+          exit 1
+
+  deploy-nextjs:
+    needs: [build-nextjs, deploy-flask]
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Deploy and wait
         run: |
-          curl --request GET "${{ secrets.COOLIFY_WEBHOOK_FLASK }}" \
-            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
+          RESPONSE=$(curl --fail --silent --request GET "${{ secrets.COOLIFY_WEBHOOK }}" \
+            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
 
+          DEPLOYMENT_UUID=$(echo "$RESPONSE" | jq -r '.deployment_uuid // empty')
+
+          if [ -z "$DEPLOYMENT_UUID" ]; then
+            echo "::error::Failed to get deployment UUID"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+          echo "Deployment UUID: $DEPLOYMENT_UUID"
+
+          COOLIFY_BASE=$(echo "${{ secrets.COOLIFY_WEBHOOK }}" | sed 's|/api/v1/deploy.*||')
+
+          for i in $(seq 1 60); do
+            STATUS_RESPONSE=$(curl --fail --silent \
+              "${COOLIFY_BASE}/api/v1/deployments/${DEPLOYMENT_UUID}" \
+              --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
+
+            STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // empty')
+
+            case "$STATUS" in
+              "finished")
+                echo "Next.js deployment succeeded"
+                exit 0
+                ;;
+              "failed"|"cancelled")
+                echo "::error::Next.js deployment ${STATUS}"
+                echo "$STATUS_RESPONSE" | jq .
+                exit 1
+                ;;
+              *)
+                echo "Status: ${STATUS:-unknown} (attempt $i/60)"
+                sleep 10
+                ;;
+            esac
+          done
+
+          echo "::error::Next.js deployment timed out"
+          exit 1
+
+  summary:
+    needs: [prepare, deploy-nextjs, deploy-flask]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
       - name: Summary
         run: |
           echo "## Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | Image |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Next.js | ${{ env.IMAGE_NEXT }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Flask | ${{ env.IMAGE_FLASK }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Image | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Next.js | ${{ needs.prepare.outputs.image_next }} | ${{ needs.deploy-nextjs.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Flask | ${{ needs.prepare.outputs.image_flask }} | ${{ needs.deploy-flask.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | ${{ github.ref_name }} | |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} | |" >> $GITHUB_STEP_SUMMARY
