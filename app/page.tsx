@@ -8,7 +8,12 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { fontTitle } from "@/lib/fonts"
-import { Film, Zap, Target, ArrowRight, Play, ChevronDown } from "lucide-react"
+import { Film, Zap, Target, ArrowRight, Play, ChevronDown, Github, Linkedin, Twitter } from "lucide-react"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
 
 interface BallDetection {
   time: number
@@ -417,7 +422,47 @@ export default function LandingPage() {
             <Icons.appIcon className="h-4 w-4 text-primary" />
             Highlight AI
           </Link>
-          <p className="text-xs text-muted-foreground">Built with AI + computer vision</p>
+          <p className="flex items-center gap-1 text-xs text-muted-foreground">
+            Built by{" "}
+            <HoverCard openDelay={200} closeDelay={100}>
+              <HoverCardTrigger
+                className="inline border-0 bg-transparent p-0 font-inherit text-inherit shadow-none underline-offset-2 hover:underline"
+              >
+                Janjs
+              </HoverCardTrigger>
+              <HoverCardContent side="top" align="center">
+                <div className="flex flex-col gap-2 text-xs text-muted-foreground">
+                  <a
+                    href="https://www.linkedin.com/in/janjimenezserra/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 hover:text-foreground"
+                  >
+                    <Linkedin className="h-4 w-4" />
+                    LinkedIn
+                  </a>
+                  <a
+                    href="https://github.com/Janjs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 hover:text-foreground"
+                  >
+                    <Github className="h-4 w-4" />
+                    GitHub
+                  </a>
+                  <a
+                    href="https://x.com/janjijs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 hover:text-foreground"
+                  >
+                    <Twitter className="h-4 w-4" />
+                    X
+                  </a>
+                </div>
+              </HoverCardContent>
+            </HoverCard>
+          </p>
         </div>
       </footer>
     </div>
