@@ -8,9 +8,12 @@ const FLASK_API_URL = process.env.FLASK_API_URL || "http://localhost:5001"
 
 export async function POST(request: NextRequest) {
     const contentType = request.headers.get("content-type") || ""
+    const contentLength = request.headers.get("content-length")
 
     try {
-        const body = Buffer.from(await request.arrayBuffer())
+        if (!request.body) {
+            return NextResponse.json({ error: "Empty upload body" }, { status: 400 })
+        }
 
         const { Agent, fetch: undiciFetch } = await import("undici")
         const agent = new Agent({
@@ -19,10 +22,16 @@ export async function POST(request: NextRequest) {
             connectTimeout: 30 * 1000,
         })
 
+        const headers: Record<string, string> = {}
+        if (contentType) headers["content-type"] = contentType
+        if (contentLength) headers["content-length"] = contentLength
+
         const response = await undiciFetch(`${FLASK_API_URL}/upload`, {
             method: "POST",
-            headers: { "content-type": contentType },
-            body,
+            headers,
+            body: request.body as any,
+            // Node/undici requires this for streaming request bodies.
+            duplex: "half" as any,
             dispatcher: agent,
         })
 

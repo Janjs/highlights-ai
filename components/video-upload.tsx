@@ -143,6 +143,8 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
 
         xhr.addEventListener("error", () => reject(new Error("Upload failed")))
         xhr.addEventListener("abort", () => reject(new Error("Upload aborted")))
+        xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")))
+        xhr.timeout = 10 * 60 * 1000
 
         xhr.open("POST", "/api/process-video")
 

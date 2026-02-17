@@ -5,6 +5,7 @@ import logging
 import subprocess
 import shutil
 import base64
+import math
 import threading
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from logging.handlers import RotatingFileHandler
@@ -96,6 +97,22 @@ def _persist_ball_cache_async(cache_path: str, detections: list):
             logger.warning(f"Failed to cache ball detections: {e}")
 
     threading.Thread(target=_worker, daemon=True).start()
+
+
+def _effective_frame_skip(requested_frame_skip: int, total_frames: int, target_samples: int) -> int:
+    if requested_frame_skip > 0:
+        return requested_frame_skip
+    if total_frames <= 0:
+        return 1
+    return max(1, math.ceil(total_frames / max(1, target_samples)))
+
+
+def _upload_encode_mode() -> str:
+    # remux: fast path, transcode: slower but most compatible
+    mode = os.getenv("UPLOAD_ENCODE_MODE", "remux").strip().lower()
+    if mode in ("remux", "transcode"):
+        return mode
+    return "remux"
 
 
 def detect_scenes(video_path: str, threshold: float = 70.0, min_scene_len: int = 15) -> list:
@@ -388,25 +405,57 @@ def upload_video():
     compress_start = time.time()
     compressed_size = original_size
     compression_fallback = False
+    encode_mode = _upload_encode_mode()
     try:
-        subprocess.run([
-            'ffmpeg', '-i', original_path,
-            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
-            '-c:a', 'aac', '-b:a', '128k',
-            '-movflags', '+faststart',
-            compressed_path, '-y'
-        ], capture_output=True, check=True, timeout=600)
+        if encode_mode == "remux":
+            subprocess.run([
+                'ffmpeg', '-i', original_path,
+                '-c', 'copy',
+                '-movflags', '+faststart',
+                compressed_path, '-y'
+            ], capture_output=True, check=True, timeout=300)
+        else:
+            subprocess.run([
+                'ffmpeg', '-i', original_path,
+                '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+                '-c:a', 'aac', '-b:a', '128k',
+                '-movflags', '+faststart',
+                compressed_path, '-y'
+            ], capture_output=True, check=True, timeout=600)
         compress_ms = (time.time() - compress_start) * 1000
         compressed_size = os.path.getsize(compressed_path)
         reduction = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
-        logger.info(f"Compressed in {compress_ms / 1000:.2f}s "
+        logger.info(f"Upload encode ({encode_mode}) finished in {compress_ms / 1000:.2f}s "
                      f"({original_size / 1024 / 1024:.1f}MB -> {compressed_size / 1024 / 1024:.1f}MB, "
                      f"{reduction:.1f}% reduction)")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        compress_ms = (time.time() - compress_start) * 1000
-        logger.warning(f"Compression failed, using original: {e}")
-        shutil.copy2(original_path, compressed_path)
-        compression_fallback = True
+        if encode_mode == "remux":
+            logger.warning(f"Remux failed, retrying with transcode: {e}")
+            try:
+                transcode_start = time.time()
+                subprocess.run([
+                    'ffmpeg', '-i', original_path,
+                    '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+                    '-c:a', 'aac', '-b:a', '128k',
+                    '-movflags', '+faststart',
+                    compressed_path, '-y'
+                ], capture_output=True, check=True, timeout=600)
+                compress_ms = (time.time() - compress_start) * 1000
+                compressed_size = os.path.getsize(compressed_path)
+                logger.info(
+                    f"Upload encode (fallback transcode) finished in {(time.time() - transcode_start):.2f}s"
+                )
+                compression_fallback = True
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e2:
+                compress_ms = (time.time() - compress_start) * 1000
+                logger.warning(f"Transcode fallback failed, using original: {e2}")
+                shutil.copy2(original_path, compressed_path)
+                compression_fallback = True
+        else:
+            compress_ms = (time.time() - compress_start) * 1000
+            logger.warning(f"Compression failed, using original: {e}")
+            shutil.copy2(original_path, compressed_path)
+            compression_fallback = True
 
     try:
         scene_start = time.time()
@@ -423,6 +472,7 @@ def upload_video():
             "inputSizeBytes": original_size,
             "outputSizeBytes": compressed_size,
             "compressionFallback": compression_fallback,
+            "encodeMode": encode_mode,
         }
         logger.info(f"Upload pipeline timings: {timings}")
         return jsonify({"scenes": scenes, "timings": timings})
@@ -489,7 +539,7 @@ def scenes_only():
 def balls_only():
     data = request.get_json()
     video_path = data.get('video_path')
-    frame_skip = int(data.get('frame_skip', _env_int("ROBOFLOW_FRAME_SKIP", 2, min_value=1, max_value=240)))
+    requested_frame_skip = int(data.get('frame_skip', _env_int("ROBOFLOW_FRAME_SKIP", 0, min_value=0, max_value=240)))
     confidence_threshold = float(data.get(
         'confidence_threshold',
         _env_float("ROBOFLOW_CONFIDENCE_THRESHOLD", 0.25, min_value=0.01, max_value=0.99),
@@ -504,6 +554,11 @@ def balls_only():
         return jsonify({"error": "Invalid video_path"}), 400
 
     try:
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        target_samples = _env_int("ROBOFLOW_TARGET_SAMPLES", 450, min_value=50, max_value=10000)
+        frame_skip = _effective_frame_skip(requested_frame_skip, total_frames, target_samples)
         detections, timings = detect_balls(
             video_path,
             frame_skip=frame_skip,
@@ -516,6 +571,8 @@ def balls_only():
             "timings": timings,
             "settings": {
                 "frameSkip": frame_skip,
+                "requestedFrameSkip": requested_frame_skip,
+                "targetSamples": target_samples,
                 "confidenceThreshold": confidence_threshold,
                 "maxWorkers": max_workers,
                 "inferMaxWidth": infer_max_width,
@@ -530,7 +587,7 @@ def balls_only():
 def balls_stream():
     request_start = time.time()
     data = request.get_json() or {}
-    frame_skip = int(data.get('frame_skip', _env_int("ROBOFLOW_FRAME_SKIP", 2, min_value=1, max_value=240)))
+    requested_frame_skip = int(data.get('frame_skip', _env_int("ROBOFLOW_FRAME_SKIP", 0, min_value=0, max_value=240)))
     confidence_threshold = float(data.get(
         'confidence_threshold',
         _env_float("ROBOFLOW_CONFIDENCE_THRESHOLD", 0.25, min_value=0.01, max_value=0.99),
@@ -590,7 +647,14 @@ def balls_stream():
             return
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        target_samples = _env_int("ROBOFLOW_TARGET_SAMPLES", 450, min_value=50, max_value=10000)
+        frame_skip = _effective_frame_skip(requested_frame_skip, total_frames, target_samples)
         frames_to_process = total_frames // frame_skip + (1 if total_frames % frame_skip else 0)
+        logger.info(
+            f"Ball stream settings: requested_frame_skip={requested_frame_skip}, "
+            f"effective_frame_skip={frame_skip}, target_samples={target_samples}, "
+            f"frames_to_process={frames_to_process}, total_frames={total_frames}"
+        )
 
         yield json.dumps({
             "type": "meta",
@@ -599,6 +663,8 @@ def balls_stream():
             "videoFrames": total_frames,
             "settings": {
                 "frameSkip": frame_skip,
+                "requestedFrameSkip": requested_frame_skip,
+                "targetSamples": target_samples,
                 "confidenceThreshold": confidence_threshold,
                 "maxWorkers": max_workers,
                 "inferMaxWidth": infer_max_width,

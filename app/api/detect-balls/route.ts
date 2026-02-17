@@ -3,7 +3,8 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
 const FLASK_API_URL = process.env.FLASK_API_URL || "http://localhost:5001"
-const FRAME_SKIP = Number(process.env.ROBOFLOW_FRAME_SKIP || "2")
+const RAW_FRAME_SKIP = process.env.ROBOFLOW_FRAME_SKIP
+const FRAME_SKIP = RAW_FRAME_SKIP == null ? undefined : Number(RAW_FRAME_SKIP)
 const CONFIDENCE_THRESHOLD = Number(process.env.ROBOFLOW_CONFIDENCE_THRESHOLD || "0.25")
 const MAX_WORKERS = Number(process.env.ROBOFLOW_MAX_WORKERS || "4")
 const INFER_MAX_WIDTH = Number(process.env.ROBOFLOW_INFER_MAX_WIDTH || "960")
@@ -17,15 +18,24 @@ export async function POST() {
             connectTimeout: 10 * 1000,
         })
 
+        const payload: Record<string, number> = {}
+        if (FRAME_SKIP !== undefined && Number.isFinite(FRAME_SKIP) && FRAME_SKIP >= 0) {
+            payload.frame_skip = FRAME_SKIP
+        }
+        if (Number.isFinite(CONFIDENCE_THRESHOLD)) {
+            payload.confidence_threshold = CONFIDENCE_THRESHOLD
+        }
+        if (Number.isFinite(MAX_WORKERS)) {
+            payload.max_workers = MAX_WORKERS
+        }
+        if (Number.isFinite(INFER_MAX_WIDTH)) {
+            payload.infer_max_width = INFER_MAX_WIDTH
+        }
+
         const response = await undiciFetch(`${FLASK_API_URL}/balls/stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                frame_skip: Number.isFinite(FRAME_SKIP) ? FRAME_SKIP : 2,
-                confidence_threshold: Number.isFinite(CONFIDENCE_THRESHOLD) ? CONFIDENCE_THRESHOLD : 0.25,
-                max_workers: Number.isFinite(MAX_WORKERS) ? MAX_WORKERS : 4,
-                infer_max_width: Number.isFinite(INFER_MAX_WIDTH) ? INFER_MAX_WIDTH : 960,
-            }),
+            body: JSON.stringify(payload),
             dispatcher: agent,
         })
 
