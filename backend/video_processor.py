@@ -5,6 +5,8 @@ import logging
 import subprocess
 import shutil
 import base64
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from logging.handlers import RotatingFileHandler
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
@@ -55,6 +57,28 @@ logger.addHandler(file_handler)
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024 * 1024
 CORS(app)
+
+
+def _env_int(name: str, default: int, min_value: int = 1, max_value: int = 64) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(min_value, min(max_value, value))
+
+
+def _env_float(name: str, default: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(min_value, min(max_value, value))
 
 
 def detect_scenes(video_path: str, threshold: float = 70.0, min_scene_len: int = 15) -> list:
@@ -130,66 +154,184 @@ ROBOFLOW_MODEL_ID = "made-baskets-gswke/1"
 ROBOFLOW_HOSTED_URL = "https://detect.roboflow.com"
 
 
-def _infer_frame_api(frame, api_key: str, model_id: str, confidence: float = 0.5, overlap: float = 0.5):
-    _, buf = cv2.imencode(".jpg", frame)
+def _resize_for_inference(frame, infer_max_width: int):
+    if infer_max_width <= 0:
+        return frame, 1.0, 1.0
+    h, w = frame.shape[:2]
+    if w <= infer_max_width:
+        return frame, 1.0, 1.0
+    scale = infer_max_width / float(w)
+    resized_h = max(1, int(h * scale))
+    resized = cv2.resize(frame, (infer_max_width, resized_h), interpolation=cv2.INTER_AREA)
+    scale_x = w / float(infer_max_width)
+    scale_y = h / float(resized_h)
+    return resized, scale_x, scale_y
+
+
+def _infer_frame_api(frame, api_key: str, model_id: str, confidence: float = 0.5, overlap: float = 0.5,
+                     session: requests.Session | None = None, infer_max_width: int = 0):
+    frame_for_inference, scale_x, scale_y = _resize_for_inference(frame, infer_max_width)
+    _, buf = cv2.imencode(".jpg", frame_for_inference, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     b64 = base64.b64encode(buf.tobytes()).decode("ascii")
     url = f"{ROBOFLOW_HOSTED_URL}/{model_id}"
     params = {"api_key": api_key, "confidence": confidence, "overlap": overlap}
-    r = requests.post(url, params=params, data=b64, headers={"Content-Type": "application/json"}, timeout=30)
+    client = session if session else requests
+    r = client.post(url, params=params, data=b64, headers={"Content-Type": "application/json"}, timeout=30)
     r.raise_for_status()
-    return r.json()
+    results = r.json()
+
+    # Predictions are produced in resized-frame coordinates; map back to original frame size.
+    if scale_x != 1.0 or scale_y != 1.0:
+        predictions = _extract_predictions(results)
+        for pred in predictions:
+            if isinstance(pred, dict):
+                pred["x"] = pred.get("x", 0) * scale_x
+                pred["y"] = pred.get("y", 0) * scale_y
+                pred["width"] = pred.get("width", 0) * scale_x
+                pred["height"] = pred.get("height", 0) * scale_y
+
+    return results
 
 
-def detect_balls(video_path: str, frame_skip: int = 2, confidence_threshold: float = 0.25) -> list:
+def detect_balls(video_path: str, frame_skip: int = 2, confidence_threshold: float = 0.25,
+                 max_workers: int = 4, infer_max_width: int = 960) -> tuple[list, dict]:
     API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
     if not API_KEY:
         raise ValueError("ROBOFLOW_API_KEY is required")
 
-    logger.info(f"Starting ball detection for: {video_path} (Roboflow hosted API)")
+    frame_skip = max(1, int(frame_skip))
+    max_workers = max(1, int(max_workers))
+    infer_max_width = max(0, int(infer_max_width))
+
+    logger.info(
+        f"Starting ball detection for: {video_path} "
+        f"(Roboflow hosted API, frame_skip={frame_skip}, workers={max_workers}, infer_max_width={infer_max_width})"
+    )
 
     cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Failed to open video: {video_path}")
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames_to_process = total_frames // frame_skip + (1 if total_frames % frame_skip else 0)
 
     detections = []
     frame_count = 0
     processed_count = 0
     start_time = time.time()
+    submit_time = 0.0
+    wait_time = 0.0
+    failed_frames = 0
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    thread_local = threading.local()
 
-        if frame_count % frame_skip == 0:
-            timestamp = frame_count / fps if fps > 0 else 0
-            frame_detections = []
+    def _get_session():
+        if not hasattr(thread_local, "session"):
+            session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(pool_connections=max_workers, pool_maxsize=max_workers)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+            thread_local.session = session
+        return thread_local.session
 
-            try:
-                results = _infer_frame_api(frame, API_KEY, ROBOFLOW_MODEL_ID, confidence=confidence_threshold)
-                for pred in _extract_predictions(results):
-                    box = _extract_box(pred, confidence_threshold)
-                    if box:
-                        frame_detections.append(box)
-            except Exception as e:
-                logger.warning(f"Error processing frame {frame_count}: {e}")
+    def _infer_task(frame, sampled_frame_count: int, timestamp: float):
+        infer_start = time.time()
+        frame_detections = []
+        error_msg = None
+        try:
+            results = _infer_frame_api(
+                frame,
+                API_KEY,
+                ROBOFLOW_MODEL_ID,
+                confidence=confidence_threshold,
+                session=_get_session(),
+                infer_max_width=infer_max_width,
+            )
+            for pred in _extract_predictions(results):
+                box = _extract_box(pred, confidence_threshold)
+                if box:
+                    frame_detections.append(box)
+        except Exception as e:
+            error_msg = str(e)
 
-            detections.append({
-                "time": round(timestamp, 3),
-                "frame": frame_count,
-                "boxes": frame_detections
-            })
-            processed_count += 1
+        infer_elapsed = (time.time() - infer_start) * 1000
+        return {
+            "time": round(timestamp, 3),
+            "frame": sampled_frame_count,
+            "boxes": frame_detections,
+        }, error_msg, infer_elapsed
 
-            if processed_count % 100 == 0:
-                progress = (frame_count / total_frames) * 100 if total_frames > 0 else 0
-                logger.info(f"  Progress: {progress:.1f}% ({processed_count} frames)")
+    max_in_flight = max_workers * 2
+    in_flight = set()
+    future_meta = {}
 
-        frame_count += 1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        while True:
+            grabbed = cap.grab()
+            if not grabbed:
+                break
+
+            if frame_count % frame_skip == 0:
+                ret, frame = cap.retrieve()
+                if not ret:
+                    break
+                timestamp = frame_count / fps if fps > 0 else 0
+                submit_start = time.time()
+                future = executor.submit(_infer_task, frame, frame_count, timestamp)
+                submit_time += (time.time() - submit_start) * 1000
+                in_flight.add(future)
+                future_meta[future] = frame_count
+
+            frame_count += 1
+
+            while len(in_flight) >= max_in_flight:
+                wait_start = time.time()
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                wait_time += (time.time() - wait_start) * 1000
+                for future in done:
+                    in_flight.remove(future)
+                    sampled_frame = future_meta.pop(future, None)
+                    detection, error_msg, _ = future.result()
+                    if error_msg:
+                        failed_frames += 1
+                        logger.warning(f"Error processing frame {sampled_frame}: {error_msg}")
+                    detections.append(detection)
+                    processed_count += 1
+                    if processed_count % 100 == 0:
+                        progress = (processed_count / frames_to_process) * 100 if frames_to_process > 0 else 0
+                        logger.info(f"  Progress: {progress:.1f}% ({processed_count} frames)")
+
+        while in_flight:
+            wait_start = time.time()
+            done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            wait_time += (time.time() - wait_start) * 1000
+            for future in done:
+                in_flight.remove(future)
+                sampled_frame = future_meta.pop(future, None)
+                detection, error_msg, _ = future.result()
+                if error_msg:
+                    failed_frames += 1
+                    logger.warning(f"Error processing frame {sampled_frame}: {error_msg}")
+                detections.append(detection)
+                processed_count += 1
+                if processed_count % 100 == 0:
+                    progress = (processed_count / frames_to_process) * 100 if frames_to_process > 0 else 0
+                    logger.info(f"  Progress: {progress:.1f}% ({processed_count} frames)")
 
     cap.release()
-    logger.info(f"Ball detection complete in {time.time() - start_time:.2f}s ({processed_count} frames)")
-    return detections
+    detections.sort(key=lambda d: d["frame"])
+
+    elapsed_ms = (time.time() - start_time) * 1000
+    timings = {
+        "totalMs": round(elapsed_ms, 2),
+        "submitMs": round(submit_time, 2),
+        "waitMs": round(wait_time, 2),
+    }
+    logger.info(
+        f"Ball detection complete in {elapsed_ms / 1000:.2f}s "
+        f"({processed_count} frames, failed={failed_frames}, timings={timings})"
+    )
+    return detections, timings
 
 
 # ============================================================
@@ -203,6 +345,7 @@ def health():
 
 @app.route('/upload', methods=['POST'])
 def upload_video():
+    request_start = time.time()
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided"}), 400
 
@@ -221,10 +364,13 @@ def upload_video():
 
     save_start = time.time()
     video.save(original_path)
+    save_ms = (time.time() - save_start) * 1000
     original_size = os.path.getsize(original_path)
-    logger.info(f"Video saved ({original_size / 1024 / 1024:.2f} MB) in {time.time() - save_start:.2f}s")
+    logger.info(f"Video saved ({original_size / 1024 / 1024:.2f} MB) in {save_ms / 1000:.2f}s")
 
     compress_start = time.time()
+    compressed_size = original_size
+    compression_fallback = False
     try:
         subprocess.run([
             'ffmpeg', '-i', original_path,
@@ -233,21 +379,36 @@ def upload_video():
             '-movflags', '+faststart',
             compressed_path, '-y'
         ], capture_output=True, check=True, timeout=600)
+        compress_ms = (time.time() - compress_start) * 1000
         compressed_size = os.path.getsize(compressed_path)
         reduction = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
-        logger.info(f"Compressed in {time.time() - compress_start:.2f}s "
+        logger.info(f"Compressed in {compress_ms / 1000:.2f}s "
                      f"({original_size / 1024 / 1024:.1f}MB -> {compressed_size / 1024 / 1024:.1f}MB, "
                      f"{reduction:.1f}% reduction)")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        compress_ms = (time.time() - compress_start) * 1000
         logger.warning(f"Compression failed, using original: {e}")
         shutil.copy2(original_path, compressed_path)
+        compression_fallback = True
 
     try:
+        scene_start = time.time()
         scenes = detect_scenes(compressed_path)
+        scene_detect_ms = (time.time() - scene_start) * 1000
         if _cache_enabled():
             with open(scenes_path, 'w') as f:
                 json.dump(scenes, f)
-        return jsonify({"scenes": scenes})
+        timings = {
+            "saveMs": round(save_ms, 2),
+            "compressMs": round(compress_ms, 2),
+            "sceneDetectMs": round(scene_detect_ms, 2),
+            "totalMs": round((time.time() - request_start) * 1000, 2),
+            "inputSizeBytes": original_size,
+            "outputSizeBytes": compressed_size,
+            "compressionFallback": compression_fallback,
+        }
+        logger.info(f"Upload pipeline timings: {timings}")
+        return jsonify({"scenes": scenes, "timings": timings})
     except Exception as e:
         logger.exception(f"Scene detection failed: {e}")
         return jsonify({"error": str(e)}), 500
@@ -311,14 +472,38 @@ def scenes_only():
 def balls_only():
     data = request.get_json()
     video_path = data.get('video_path')
-    frame_skip = data.get('frame_skip', 2)
+    frame_skip = int(data.get('frame_skip', _env_int("ROBOFLOW_FRAME_SKIP", 2, min_value=1, max_value=240)))
+    confidence_threshold = float(data.get(
+        'confidence_threshold',
+        _env_float("ROBOFLOW_CONFIDENCE_THRESHOLD", 0.25, min_value=0.01, max_value=0.99),
+    ))
+    max_workers = int(data.get('max_workers', _env_int("ROBOFLOW_MAX_WORKERS", 4, min_value=1, max_value=16)))
+    infer_max_width = int(data.get(
+        'infer_max_width',
+        _env_int("ROBOFLOW_INFER_MAX_WIDTH", 960, min_value=160, max_value=3840),
+    ))
 
     if not video_path or not os.path.exists(video_path):
         return jsonify({"error": "Invalid video_path"}), 400
 
     try:
-        detections = detect_balls(video_path, frame_skip=frame_skip)
-        return jsonify({"ballDetections": detections})
+        detections, timings = detect_balls(
+            video_path,
+            frame_skip=frame_skip,
+            confidence_threshold=confidence_threshold,
+            max_workers=max_workers,
+            infer_max_width=infer_max_width,
+        )
+        return jsonify({
+            "ballDetections": detections,
+            "timings": timings,
+            "settings": {
+                "frameSkip": frame_skip,
+                "confidenceThreshold": confidence_threshold,
+                "maxWorkers": max_workers,
+                "inferMaxWidth": infer_max_width,
+            }
+        })
     except Exception as e:
         logger.exception(f"Ball detection error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -326,9 +511,18 @@ def balls_only():
 
 @app.route('/balls/stream', methods=['POST'])
 def balls_stream():
+    request_start = time.time()
     data = request.get_json() or {}
-    frame_skip = data.get('frame_skip', 2)
-    confidence_threshold = data.get('confidence_threshold', 0.25)
+    frame_skip = int(data.get('frame_skip', _env_int("ROBOFLOW_FRAME_SKIP", 2, min_value=1, max_value=240)))
+    confidence_threshold = float(data.get(
+        'confidence_threshold',
+        _env_float("ROBOFLOW_CONFIDENCE_THRESHOLD", 0.25, min_value=0.01, max_value=0.99),
+    ))
+    max_workers = int(data.get('max_workers', _env_int("ROBOFLOW_MAX_WORKERS", 4, min_value=1, max_value=16)))
+    infer_max_width = int(data.get(
+        'infer_max_width',
+        _env_int("ROBOFLOW_INFER_MAX_WIDTH", 960, min_value=160, max_value=3840),
+    ))
 
     video_path = data.get('video_path') or os.path.join(CACHE_DIR, 'input.mp4')
     cache_path = os.path.join(CACHE_DIR, 'ball_detections.json')
@@ -342,10 +536,28 @@ def balls_stream():
                 with open(cache_path) as f:
                     cached = json.load(f)
                 logger.info(f"Returning cached ball detections ({len(cached)} frames)")
-                yield json.dumps({"type": "meta", "totalFrames": len(cached), "cached": True}) + "\n"
+                yield json.dumps({
+                    "type": "meta",
+                    "totalFrames": len(cached),
+                    "cached": True,
+                    "settings": {
+                        "frameSkip": frame_skip,
+                        "confidenceThreshold": confidence_threshold,
+                        "maxWorkers": max_workers,
+                        "inferMaxWidth": infer_max_width,
+                    }
+                }) + "\n"
                 for detection in cached:
                     yield json.dumps({"type": "detection", "data": detection, "processed": len(cached), "total": len(cached)}) + "\n"
-                yield json.dumps({"type": "done", "processed": len(cached), "cached": True}) + "\n"
+                yield json.dumps({
+                    "type": "done",
+                    "processed": len(cached),
+                    "cached": True,
+                    "elapsed": round(time.time() - request_start, 2),
+                    "timings": {
+                        "totalMs": round((time.time() - request_start) * 1000, 2)
+                    }
+                }) + "\n"
                 return
             except Exception:
                 pass
@@ -356,43 +568,134 @@ def balls_stream():
             return
 
         cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            yield json.dumps({"type": "error", "message": f"Failed to open video: {video_path}"}) + "\n"
+            return
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         frames_to_process = total_frames // frame_skip + (1 if total_frames % frame_skip else 0)
 
-        yield json.dumps({"type": "meta", "totalFrames": frames_to_process, "fps": fps, "videoFrames": total_frames}) + "\n"
+        yield json.dumps({
+            "type": "meta",
+            "totalFrames": frames_to_process,
+            "fps": fps,
+            "videoFrames": total_frames,
+            "settings": {
+                "frameSkip": frame_skip,
+                "confidenceThreshold": confidence_threshold,
+                "maxWorkers": max_workers,
+                "inferMaxWidth": infer_max_width,
+            }
+        }) + "\n"
 
         all_detections = []
         frame_count = 0
         processed_count = 0
         start_time = time.time()
+        submit_time = 0.0
+        wait_time = 0.0
+        failed_frames = 0
+        thread_local = threading.local()
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+        def _get_session():
+            if not hasattr(thread_local, "session"):
+                session = requests.Session()
+                adapter = requests.adapters.HTTPAdapter(pool_connections=max_workers, pool_maxsize=max_workers)
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+                thread_local.session = session
+            return thread_local.session
 
-            if frame_count % frame_skip == 0:
-                timestamp = frame_count / fps if fps > 0 else 0
-                frame_detections = []
+        def _infer_task(frame, sampled_frame_count: int, timestamp: float):
+            frame_detections = []
+            error_msg = None
+            try:
+                results = _infer_frame_api(
+                    frame,
+                    API_KEY,
+                    ROBOFLOW_MODEL_ID,
+                    confidence=confidence_threshold,
+                    session=_get_session(),
+                    infer_max_width=infer_max_width,
+                )
+                for pred in _extract_predictions(results):
+                    box = _extract_box(pred, confidence_threshold)
+                    if box:
+                        frame_detections.append(box)
+            except Exception as e:
+                error_msg = str(e)
 
-                try:
-                    results = _infer_frame_api(frame, API_KEY, ROBOFLOW_MODEL_ID, confidence=confidence_threshold)
-                    for pred in _extract_predictions(results):
-                        box = _extract_box(pred, confidence_threshold)
-                        if box:
-                            frame_detections.append(box)
-                except Exception as e:
-                    logger.warning(f"Error processing frame {frame_count}: {e}")
+            return {
+                "time": round(timestamp, 3),
+                "frame": sampled_frame_count,
+                "boxes": frame_detections,
+            }, error_msg
 
-                processed_count += 1
-                detection = {"time": round(timestamp, 3), "frame": frame_count, "boxes": frame_detections}
-                all_detections.append(detection)
-                yield json.dumps({"type": "detection", "data": detection, "processed": processed_count, "total": frames_to_process}) + "\n"
+        max_in_flight = max_workers * 2
+        in_flight = set()
+        future_meta = {}
 
-            frame_count += 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            while True:
+                grabbed = cap.grab()
+                if not grabbed:
+                    break
+
+                if frame_count % frame_skip == 0:
+                    ret, frame = cap.retrieve()
+                    if not ret:
+                        break
+                    timestamp = frame_count / fps if fps > 0 else 0
+                    submit_start = time.time()
+                    future = executor.submit(_infer_task, frame, frame_count, timestamp)
+                    submit_time += (time.time() - submit_start) * 1000
+                    in_flight.add(future)
+                    future_meta[future] = frame_count
+
+                frame_count += 1
+
+                while len(in_flight) >= max_in_flight:
+                    wait_start = time.time()
+                    done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                    wait_time += (time.time() - wait_start) * 1000
+                    for future in done:
+                        in_flight.remove(future)
+                        sampled_frame = future_meta.pop(future, None)
+                        detection, error_msg = future.result()
+                        if error_msg:
+                            failed_frames += 1
+                            logger.warning(f"Error processing frame {sampled_frame}: {error_msg}")
+                        processed_count += 1
+                        all_detections.append(detection)
+                        yield json.dumps({
+                            "type": "detection",
+                            "data": detection,
+                            "processed": processed_count,
+                            "total": frames_to_process
+                        }) + "\n"
+
+            while in_flight:
+                wait_start = time.time()
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                wait_time += (time.time() - wait_start) * 1000
+                for future in done:
+                    in_flight.remove(future)
+                    sampled_frame = future_meta.pop(future, None)
+                    detection, error_msg = future.result()
+                    if error_msg:
+                        failed_frames += 1
+                        logger.warning(f"Error processing frame {sampled_frame}: {error_msg}")
+                    processed_count += 1
+                    all_detections.append(detection)
+                    yield json.dumps({
+                        "type": "detection",
+                        "data": detection,
+                        "processed": processed_count,
+                        "total": frames_to_process
+                    }) + "\n"
 
         cap.release()
+        all_detections.sort(key=lambda d: d["frame"])
 
         if _cache_enabled():
             try:
@@ -403,14 +706,30 @@ def balls_stream():
                 logger.warning(f"Failed to cache ball detections: {e}")
 
         elapsed = time.time() - start_time
-        logger.info(f"Streaming ball detection complete in {elapsed:.2f}s ({processed_count} frames)")
-        yield json.dumps({"type": "done", "processed": processed_count, "elapsed": round(elapsed, 2)}) + "\n"
+        timings = {
+            "totalMs": round(elapsed * 1000, 2),
+            "submitMs": round(submit_time, 2),
+            "waitMs": round(wait_time, 2),
+            "failedFrames": failed_frames,
+            "requestTotalMs": round((time.time() - request_start) * 1000, 2),
+        }
+        logger.info(
+            f"Streaming ball detection complete in {elapsed:.2f}s "
+            f"({processed_count} frames, failed={failed_frames}, timings={timings})"
+        )
+        yield json.dumps({
+            "type": "done",
+            "processed": processed_count,
+            "elapsed": round(elapsed, 2),
+            "timings": timings
+        }) + "\n"
 
     return Response(stream_with_context(generate()), content_type='application/x-ndjson')
 
 
 @app.route('/export', methods=['POST'])
 def export_video():
+    request_start = time.time()
     data = request.get_json()
     segments = data.get('segments', [])
 
@@ -438,6 +757,7 @@ def export_video():
     logger.info(f"Exporting {len(segments)} segments...")
 
     try:
+        ffmpeg_start = time.time()
         subprocess.run([
             'ffmpeg', '-i', input_path,
             '-filter_complex', filter_complex,
@@ -447,6 +767,7 @@ def export_video():
             '-movflags', '+faststart',
             output_path, '-y'
         ], capture_output=True, check=True, timeout=600)
+        ffmpeg_ms = (time.time() - ffmpeg_start) * 1000
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.decode() if e.stderr else str(e)
         logger.error(f"FFmpeg export failed: {stderr}")
@@ -455,8 +776,17 @@ def export_video():
         logger.error("FFmpeg export timed out")
         return jsonify({"error": "Export timed out"}), 500
 
-    logger.info(f"Export complete: {output_path}")
-    return send_file(output_path, mimetype='video/mp4', as_attachment=True, download_name='highlight-export.mp4')
+    total_ms = (time.time() - request_start) * 1000
+    timings = {
+        "ffmpegMs": round(ffmpeg_ms, 2),
+        "totalMs": round(total_ms, 2),
+        "segments": len(segments),
+    }
+    logger.info(f"Export complete: {output_path} timings={timings}")
+    response = send_file(output_path, mimetype='video/mp4', as_attachment=True, download_name='highlight-export.mp4')
+    response.headers["X-Export-Ffmpeg-Ms"] = str(timings["ffmpegMs"])
+    response.headers["X-Export-Total-Ms"] = str(timings["totalMs"])
+    return response
 
 
 @app.route('/balls/cache', methods=['DELETE'])

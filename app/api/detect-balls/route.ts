@@ -3,6 +3,10 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
 const FLASK_API_URL = process.env.FLASK_API_URL || "http://localhost:5001"
+const FRAME_SKIP = Number(process.env.ROBOFLOW_FRAME_SKIP || "2")
+const CONFIDENCE_THRESHOLD = Number(process.env.ROBOFLOW_CONFIDENCE_THRESHOLD || "0.25")
+const MAX_WORKERS = Number(process.env.ROBOFLOW_MAX_WORKERS || "4")
+const INFER_MAX_WIDTH = Number(process.env.ROBOFLOW_INFER_MAX_WIDTH || "960")
 
 export async function POST() {
     try {
@@ -16,7 +20,12 @@ export async function POST() {
         const response = await undiciFetch(`${FLASK_API_URL}/balls/stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ frame_skip: 2 }),
+            body: JSON.stringify({
+                frame_skip: Number.isFinite(FRAME_SKIP) ? FRAME_SKIP : 2,
+                confidence_threshold: Number.isFinite(CONFIDENCE_THRESHOLD) ? CONFIDENCE_THRESHOLD : 0.25,
+                max_workers: Number.isFinite(MAX_WORKERS) ? MAX_WORKERS : 4,
+                infer_max_width: Number.isFinite(INFER_MAX_WIDTH) ? INFER_MAX_WIDTH : 960,
+            }),
             dispatcher: agent,
         })
 

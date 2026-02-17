@@ -1,3 +1,5 @@
+import { NextResponse } from "next/server"
+
 export const runtime = "nodejs"
 
 const FLASK_API_URL = process.env.FLASK_API_URL || "http://localhost:5001"
@@ -13,8 +15,8 @@ export async function DELETE() {
         }
 
         const data = await response.json()
-        return Response.json(data)
+        return NextResponse.json(data)
     } catch {
-        return Response.json({ success: true })
+        return NextResponse.json({ success: true })
     }
 }

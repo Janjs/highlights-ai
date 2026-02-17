@@ -72,6 +72,10 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
   const ballDetectionAttemptedRef = useRef(false)
   const ballDetectionTimerRef = useRef<ReturnType<typeof setInterval>>(null)
   const accumulatedDetectionsRef = useRef<BallDetection[]>([])
+  const streamProcessedRef = useRef(0)
+  const streamTotalRef = useRef(0)
+  const firstDetectionAtRef = useRef(0)
+  const etaSecondsRef = useRef<number | null>(null)
   const lastFlushRef = useRef(0)
   const isStreamingRef = useRef(false)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -128,6 +132,10 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     setBallDetectionProgress(0)
     ballDetectionStartRef.current = Date.now()
     accumulatedDetectionsRef.current = []
+    streamProcessedRef.current = 0
+    streamTotalRef.current = 0
+    firstDetectionAtRef.current = 0
+    etaSecondsRef.current = null
     lastFlushRef.current = Date.now()
     isStreamingRef.current = false
 
@@ -162,6 +170,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
       const decoder = new TextDecoder()
       let buffer = ""
       let lastDataAt = Date.now()
+      let completed = false
 
       while (true) {
         const readResult = await Promise.race([
@@ -184,6 +193,7 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
         buffer = lines.pop() || ""
 
         for (const line of lines) {
+          if (completed) break
           if (!line.trim()) continue
           try {
             const parsed = JSON.parse(line)
@@ -198,6 +208,9 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
                   ballDetectionTimerRef.current = null
                 }
               }
+              if (typeof parsed.totalFrames === "number" && parsed.totalFrames > 0) {
+                streamTotalRef.current = parsed.totalFrames
+              }
             }
 
             if (parsed.type === "error") {
@@ -208,6 +221,17 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
 
             if (parsed.type === "detection" && parsed.data) {
               accumulatedDetectionsRef.current.push(parsed.data)
+              if (!firstDetectionAtRef.current) {
+                firstDetectionAtRef.current = Date.now()
+              }
+              if (typeof parsed.processed === "number") {
+                streamProcessedRef.current = parsed.processed
+              } else {
+                streamProcessedRef.current = accumulatedDetectionsRef.current.length
+              }
+              if (typeof parsed.total === "number" && parsed.total > 0) {
+                streamTotalRef.current = parsed.total
+              }
               if (isStreamingRef.current && parsed.total > 0) {
                 setBallDetectionProgress((parsed.processed / parsed.total) * 100)
               }
@@ -220,17 +244,31 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
             }
 
             if (parsed.type === "done") {
+              if (typeof parsed.processed === "number") {
+                streamProcessedRef.current = parsed.processed
+              }
               setBallDetectionProgress(100)
               const finalDetections = [...accumulatedDetectionsRef.current]
               onBallDetectionsLoaded(finalDetections)
               applyBasketSelection(finalDetections)
               const basketCount = finalDetections.filter(d => d.boxes.some(b => b.class === "Made-Basket")).length
               setBallDetectionResult({ basketCount })
+              completed = true
+              try {
+                await reader.cancel()
+              } catch {}
+              break
             }
           } catch {
             // skip malformed lines
           }
         }
+
+        if (completed) break
+      }
+
+      if (completed) {
+        return
       }
 
       if (buffer.trim()) {
@@ -912,16 +950,34 @@ export function VideoEditor({ videoData, ballDetections, ballDetectionError, aiH
     if (ballDetectionProgress >= 99) return "Almost done..."
     const elapsed = Date.now() - ballDetectionStartRef.current
     if (isStreamingRef.current) {
-      const framesProcessed = accumulatedDetectionsRef.current.length
-      if (framesProcessed > 5) {
-        const remaining = Math.max(0, (100 - ballDetectionProgress) / ballDetectionProgress * elapsed)
-        const seconds = Math.ceil(remaining / 1000)
+      const framesProcessed = streamProcessedRef.current || accumulatedDetectionsRef.current.length
+      const totalFrames = streamTotalRef.current
+      const minFramesForEta = Math.max(24, Math.floor(totalFrames * 0.03))
+      if (framesProcessed >= minFramesForEta && totalFrames > framesProcessed) {
+        const startedAt = firstDetectionAtRef.current || ballDetectionStartRef.current
+        const elapsedSeconds = Math.max(0.1, (Date.now() - startedAt) / 1000)
+        const fps = framesProcessed / Math.max(0.1, elapsedSeconds)
+        let remainingSeconds = Math.max(0, (totalFrames - framesProcessed) / Math.max(0.1, fps))
+
+        // Smooth ETA updates to avoid large swings early in streaming.
+        if (etaSecondsRef.current == null) {
+          etaSecondsRef.current = remainingSeconds
+        } else {
+          etaSecondsRef.current = etaSecondsRef.current * 0.7 + remainingSeconds * 0.3
+        }
+        remainingSeconds = etaSecondsRef.current
+
+        // Cap unrealistic ETA spikes, especially during cold-start/network jitter.
+        const durationBasedCap = Math.max(90, (duration || 60) * 3.5)
+        remainingSeconds = Math.min(remainingSeconds, durationBasedCap)
+
+        const seconds = Math.ceil(remainingSeconds)
         if (seconds < 60) return `~${seconds}s remaining`
         const minutes = Math.floor(seconds / 60)
         const secs = seconds % 60
         return `~${minutes}m ${secs}s remaining`
       }
-      return "Starting..."
+      return "Calibrating..."
     }
     const estimatedMs = Math.max(10000, (duration || 60) * 800)
     const remaining = Math.max(0, estimatedMs - elapsed)
