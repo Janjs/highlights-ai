@@ -19,8 +19,7 @@ os.makedirs(os.path.join(CACHE_DIR, 'exports'), exist_ok=True)
 
 
 def _cache_enabled() -> bool:
-    v = os.getenv("CACHE_ENABLED", "1").lower()
-    return v in ("1", "true", "yes")
+    return False
 
 
 def _clear_cache_files():
@@ -79,6 +78,24 @@ def _env_float(name: str, default: float, min_value: float = 0.0, max_value: flo
     except ValueError:
         return default
     return max(min_value, min(max_value, value))
+
+
+def _persist_ball_cache_async(cache_path: str, detections: list):
+    if not _cache_enabled():
+        return
+
+    snapshot = list(detections)
+
+    def _worker():
+        try:
+            snapshot.sort(key=lambda d: d["frame"])
+            with open(cache_path, 'w') as f:
+                json.dump(snapshot, f)
+            logger.info(f"Saved {len(snapshot)} ball detections to cache (async)")
+        except Exception as e:
+            logger.warning(f"Failed to cache ball detections: {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def detect_scenes(video_path: str, threshold: float = 70.0, min_scene_len: int = 15) -> list:
@@ -695,16 +712,6 @@ def balls_stream():
                     }) + "\n"
 
         cap.release()
-        all_detections.sort(key=lambda d: d["frame"])
-
-        if _cache_enabled():
-            try:
-                with open(cache_path, 'w') as f:
-                    json.dump(all_detections, f)
-                logger.info(f"Saved {len(all_detections)} ball detections to cache")
-            except Exception as e:
-                logger.warning(f"Failed to cache ball detections: {e}")
-
         elapsed = time.time() - start_time
         timings = {
             "totalMs": round(elapsed * 1000, 2),
@@ -723,6 +730,9 @@ def balls_stream():
             "elapsed": round(elapsed, 2),
             "timings": timings
         }) + "\n"
+
+        # Keep stream completion fast for clients; cache persistence happens in the background.
+        _persist_ball_cache_async(cache_path, all_detections)
 
     return Response(stream_with_context(generate()), content_type='application/x-ndjson')
 

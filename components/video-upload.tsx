@@ -3,7 +3,7 @@
 import type React from "react"
 
 import Link from "next/link"
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useRef } from "react"
 import { Icons } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -37,45 +37,10 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
   const [stage, setStage] = useState<ProcessingStage>("uploading")
   const [uploadProgress, setUploadProgress] = useState(0)
   const [estimatedProgress, setEstimatedProgress] = useState(0)
-  const [hasCache, setHasCache] = useState(false)
   const [videoTooLong, setVideoTooLong] = useState(false)
   const estimateTimerRef = useRef<ReturnType<typeof setInterval>>(null)
   const estimateStartRef = useRef(0)
   const estimatedDurationRef = useRef(0)
-
-  useEffect(() => {
-    const checkCache = async () => {
-      try {
-        const response = await fetch("/api/cache")
-        const data = await response.json()
-        setHasCache(data.exists)
-      } catch (error) {
-        console.error("[CLIENT] Error checking cache:", error)
-      }
-    }
-    checkCache()
-  }, [])
-
-  const loadCachedVideo = useCallback(async () => {
-    try {
-      const response = await fetch("/api/cache")
-      const data = await response.json()
-
-      if (data.exists && data.scenes) {
-        const videoUrl = "/api/video"
-        const segments = data.scenes.map((scene: { start: number; end: number }) => ({
-          start: scene.start,
-          end: scene.end,
-          url: videoUrl,
-        }))
-
-        onVideoProcessed({ url: videoUrl, segments }, { aiHighlighting: aiHighlightingRef.current })
-      }
-    } catch (error) {
-      console.error("[CLIENT] Error loading cached video:", error)
-      alert("Failed to load cached video")
-    }
-  }, [onVideoProcessed])
 
   const getVideoDuration = (file: File): Promise<number> => {
     return new Promise((resolve, reject) => {
@@ -390,15 +355,6 @@ export function VideoUpload({ onVideoProcessed }: VideoUploadProps) {
             <span className="text-sm text-foreground">AI Highlight Detection</span>
             <span className="text-xs text-muted-foreground">(automatically select clips with made baskets)</span>
           </label>
-        )}
-
-        {hasCache && !isProcessing && (
-          <div className="mt-4 flex justify-center">
-            <Button variant="outline" onClick={loadCachedVideo}>
-              <Icons.history className="mr-2 h-4 w-4" />
-              Load Cached Video
-            </Button>
-          </div>
         )}
 
         <div className="mt-6 rounded-lg bg-muted/30 p-4">

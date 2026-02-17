@@ -13,7 +13,7 @@ interface BallDetection {
 const DEMO_VIDEO_URL = "/demo.mp4"
 
 export default function EditorPage() {
-  const useCache = process.env.NEXT_PUBLIC_CACHE === "1" || process.env.NEXT_PUBLIC_CACHE === "true"
+  const useCache = false
   const hasLoadedInitialDemo = useRef(false)
 
   const [videoData, setVideoData] = useState<{
